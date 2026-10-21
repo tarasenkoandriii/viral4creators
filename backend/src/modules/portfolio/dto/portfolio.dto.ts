@@ -1,4 +1,21 @@
-import { IsIn, IsOptional, IsString, IsUrl, Length } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Length,
+  Matches,
+} from 'class-validator';
+
+/**
+ * `{{имя}}` — плейсхолдер протокола FFmpeg API: и внешний сервис, и свой
+ * ffmpeg-server подставили бы/отвергли его внутри команды водяного знака
+ * (ТЗ FFmpeg-server v1.1 §6). Поэтому двойные фигурные скобки отклоняются
+ * на входе, а не «чинятся» в генераторе.
+ */
+export const WATERMARK_NO_PLACEHOLDER = /^(?![\s\S]*(?:\{\{|\}\}))/;
+export const WATERMARK_PLACEHOLDER_MESSAGE =
+  'Двойные фигурные скобки «{{» и «}}» в тексте водяного знака недопустимы';
 
 /**
  * POST /portfolio-items — self-upload (ТЗ §7, §10 «Важно»: на Этапе 0 нет
@@ -34,6 +51,7 @@ export class CreatePortfolioItemDto {
   @IsOptional()
   @IsString()
   @Length(1, 60)
+  @Matches(WATERMARK_NO_PLACEHOLDER, { message: WATERMARK_PLACEHOLDER_MESSAGE })
   watermarkText?: string;
 
   @IsOptional()
@@ -59,6 +77,7 @@ export class UpdatePortfolioItemDto {
   @IsOptional()
   @IsString()
   @Length(1, 60)
+  @Matches(WATERMARK_NO_PLACEHOLDER, { message: WATERMARK_PLACEHOLDER_MESSAGE })
   watermarkText?: string | null;
 
   @IsOptional()

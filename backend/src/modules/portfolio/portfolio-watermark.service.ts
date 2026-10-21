@@ -32,7 +32,10 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { BlobService } from '../storage/blob.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
@@ -155,6 +158,7 @@ export class PortfolioWatermarkService {
         inputs: { input: item.videoUrl },
         outputs: [plan.outputName],
         commands: [plan.command],
+        product: 'portfolio',
       });
       await this.prisma.portfolioItem.update({
         where: { id: item.id },
@@ -221,6 +225,7 @@ export class PortfolioWatermarkService {
       operation: 'watermark',
       model: 'ffmpeg-api',
       userId: item.creatorProfile.userId,
+      ...ffmpegUsageProvider(item.watermarkJobId),
     });
 
     await this.prisma.portfolioItem.update({

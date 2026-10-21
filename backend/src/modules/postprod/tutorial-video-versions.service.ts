@@ -65,7 +65,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
-import { FfmpegApiService } from './ffmpeg-api.service';
+import { FfmpegApiService, ffmpegUsageProvider } from './ffmpeg-api.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
@@ -1023,11 +1023,15 @@ export class TutorialVideoVersionsService {
         inputs: plan.inputs,
         outputs: plan.outputs,
         commands: plan.commands,
+        product: 'tutorial-video-versions',
+        // Повтор упавшей версии увеличивает `attempts` — новый ключ.
+        operationKey: `tutorial-video-version:${version.id}:${version.attempts}`,
       });
       await this.aiUsage.record({
         operation: 'tutorial-video-assembly',
         model: 'ffmpeg-api',
         userId: spendUserId,
+        ...ffmpegUsageProvider(job.jobId),
       });
       await this.prisma.tutorialVideoVersion.updateMany({
         where: { id: version.id, status: 'preparing' },

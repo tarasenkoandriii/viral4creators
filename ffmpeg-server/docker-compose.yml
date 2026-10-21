@@ -1,0 +1,155 @@
+# ffmpeg-server — свой compose (не корневой docker-compose.yml монорепо и
+# не реле). Импортируется в Dokploy на этапе C; до этого — только
+# локальная проверка. Решение Р-FF-2: изоляция — два контейнера одного
+# compose, связь — файловый протокол через общий volume workspace.
+#
+#   api       — HTTP, диспетчер, downloader. Интернет — только для
+#               скачивания входов; наружу публикуется Traefik'ом по домену.
+#   executor  — ffmpeg/ffprobe без сети, read-only, без capabilities,
+#               без секретов и без Docker socket; лимиты CPU/RAM/PIDs.
+#
+# Портов на хост нет ни у кого: api виден только Traefik'у (expose),
+# executor и SQLite — вообще не в сети.
+#
+# Обязательные переменные сборки (без них `docker compose build` падает):
+#   FFMPEG_SERVER_NODE_DIGEST   — sha256 дайджест node:24-bookworm-slim;
+#   FFMPEG_SERVER_FFMPEG_DEB    — точная версия Debian-пакета ffmpeg.
+# Квота диска: workspace — отдельная ФС фиксированного размера (loop-файл
+# xfs) по пути FFMPEG_SERVER_WORKSPACE_HOST_DIR — docs/OPERATIONS.md §6.
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      # Логи 14 дней с ограниченным объёмом (ТЗ §9): ротация по размеру
+      # здесь, срок — настройкой площадки.
+      max-size: '20m'
+      max-file: '5'
+
+services:
+  api:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+      args:
+        NODE_DIGEST: ${FFMPEG_SERVER_NODE_DIGEST:?нужен дайджест базового образа}
+        IMAGE_DIGEST: ${FFMPEG_SERVER_IMAGE_DIGEST:-}
+    image: v4c-ffmpeg-server-api:local
+    env_file: .env
+    environment:
+      - FFMPEG_SERVER_DATA_DIR=/data
+      - FFMPEG_SERVER_WORKSPACE_ROOT=/workspace
+      - FFMPEG_SERVER_OUTPUTS_ROOT=/outputs
+      - FFMPEG_SERVER_PORT=8080
+      # Online backup SQLite каждые 15 мин, хранение 7 дней (OPERATIONS §3).
+      - FFMPEG_SERVER_BACKUP_DIR=/backup
+    volumes:
+      - ffmpeg-data:/data
+      - ffmpeg-backup:/backup
+      - ffmpeg-outputs:/outputs
+      - ffmpeg-workspace:/workspace
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # ТЗ §9: API/dispatcher до 256 MiB.
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    expose:
+      - '8080'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # SIGTERM: HTTP закрывается, активная задача остаётся у executor и
+    # подхватывается при старте (recover).
+    stop_grace_period: 30s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.ffmpeg-server.rule=Host(`ffmpeg.viral4creators.app`)
+      - traefik.http.routers.ffmpeg-server.entrypoints=websecure
+      - traefik.http.routers.ffmpeg-server.tls=true
+      - traefik.http.routers.ffmpeg-server.tls.certresolver=letsencrypt
+      - traefik.http.services.ffmpeg-server.loadbalancer.server.port=8080
+      # /metrics закрыт ключом ops; дополнительно не маршрутизируем его наружу.
+      - traefik.http.routers.ffmpeg-server.middlewares=ffmpeg-server-nometrics
+      - traefik.http.middlewares.ffmpeg-server-nometrics.replacepathregex.regex=^/metrics.*
+      - traefik.http.middlewares.ffmpeg-server-nometrics.replacepathregex.replacement=/api/not-found
+    networks:
+      - dokploy-network
+
+  executor:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: executor
+      args:
+        NODE_DIGEST: ${FFMPEG_SERVER_NODE_DIGEST:?нужен дайджест базового образа}
+        FFMPEG_DEB_VERSION: ${FFMPEG_SERVER_FFMPEG_DEB:?нужна точная версия пакета ffmpeg}
+    image: v4c-ffmpeg-server-executor:local
+    # Без env_file: у executor нет и не должно быть секретов.
+    environment:
+      - WORKSPACE_ROOT=/workspace
+      - EXECUTOR_TMP_DIR=/tmp
+      - EXECUTOR_POLL_MS=500
+      - EXECUTOR_HEARTBEAT_MS=1000
+      # fontconfig из образа (read-only rootfs): доп. шрифты с ro-volume,
+      # алиас Arial → DejaVu Sans, кеш в tmpfs.
+      - FONTCONFIG_FILE=/etc/fonts/ffmpeg-server.conf
+    network_mode: none
+    # uid executor и общая группа workspace (ffwork, gid 10000): каталоги
+    # попытки создаются API с umask 007 под setgid-корнем → group-rw.
+    user: '10001:10000'
+    volumes:
+      - ffmpeg-workspace:/workspace
+      # Дополнительные шрифты (если понадобятся) — только чтение.
+      - ffmpeg-fonts:/usr/local/share/fonts/extra:ro
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    # ТЗ §9: executor до 3 GiB, 2 CPU, 128 PIDs; swap не даём.
+    cpus: 2
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 128
+    # PID 1 — init Docker (tini): осиротевшие процессы ffmpeg после
+    # kill(-pgid) reap-ятся, зомби не копятся под pids_limit.
+    init: true
+    stop_grace_period: 20s
+    labels:
+      - traefik.enable=false
+
+volumes:
+  ffmpeg-data: {}
+  # Backup SQLite — отдельный volume (копируется площадкой off-host).
+  ffmpeg-backup: {}
+  ffmpeg-outputs: {}
+  ffmpeg-fonts: {}
+  # Workspace — на отдельной ФС фиксированного размера (квота §9).
+  ffmpeg-workspace:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${FFMPEG_SERVER_WORKSPACE_HOST_DIR:-/srv/ffmpeg-quota/workspace}
+
+networks:
+  dokploy-network:
+    external: true

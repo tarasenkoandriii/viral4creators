@@ -174,6 +174,8 @@ describe('GET /api/admin/attention (e2e)', () => {
       'client-drafts': 'ok',
       assembly: 'ok',
       quality: 'not_configured',
+      // Свой FFmpeg-сервер на стенде не подключён (нет FfmpegAdminService).
+      ffmpeg: 'not_configured',
     });
     // Окно сводки кронов — последние сутки.
     const [{ since, until }] = adminCron.getSummary.mock.calls[0];

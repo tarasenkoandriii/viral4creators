@@ -68,6 +68,7 @@ export class SharedVideoPosterService {
         inputs: { video: videoUrl },
         outputs: [plan.outputName],
         commands: [plan.command],
+        product: 'shared-video',
       });
       const url = await this.awaitOutput(job.jobId, plan.outputName);
       if (!url) return null;

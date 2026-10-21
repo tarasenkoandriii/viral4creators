@@ -68,6 +68,7 @@ jobs:
       marketplace: ${{ steps.f.outputs.marketplace }}
       live_login_relay: ${{ steps.f.outputs.live_login_relay }}
       browser_worker: ${{ steps.f.outputs.browser_worker }}
+      ffmpeg_server: ${{ steps.f.outputs.ffmpeg_server }}
       next_apps: ${{ steps.f.outputs.next_apps }}
     steps:
       - uses: actions/checkout@v4
@@ -1020,6 +1021,42 @@ jobs:
         run: npm run build
         working-directory: live-login-relay
 
+  # Собственный FFmpeg API (Dokploy, не Vercel; docs-tz/FFmpeg-server-spec-v1.1-RU.md).
+  # Сквозные тесты гоняют настоящий ffmpeg из apt раннера и настоящий
+  # backend-клиент FfmpegApiService против поднятого сервера.
+  ffmpeg-server:
+    name: ffmpeg-server — типы, линт, тесты (с ffmpeg), сборка
+    needs: changes
+    if: needs.changes.outputs.ffmpeg_server == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+          cache-dependency-path: ffmpeg-server/package-lock.json
+      - name: ffmpeg (libx264, libass) и шрифты с кириллицей
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-noto-core
+          ffmpeg -hide_banner -version | head -n 1
+      - run: npm ci
+        working-directory: ffmpeg-server
+      - name: типы (src + test)
+        run: npx tsc -p tsconfig.eslint.json --noEmit
+        working-directory: ffmpeg-server
+      - name: линт
+        run: npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+        working-directory: ffmpeg-server
+      - name: тесты
+        run: npx jest --ci --runInBand
+        working-directory: ffmpeg-server
+      - name: сборка
+        run: npm run build
+        working-directory: ffmpeg-server
+
   # Э-С Ш3: браузерный воркер (изолированный VPS, Docker; не Vercel и не
   # реле живого входа). Копии чистых модулей (фильтр исходящего трафика,
   # подпись, протокол очереди, конверт учёток, стоп-лист кликов) сверяются
@@ -1305,6 +1342,7 @@ jobs:
       - next-apps
       - live-login-relay
       - browser-worker
+      - ffmpeg-server
       - assist-knowledge-sync
       - repo
       - secrets

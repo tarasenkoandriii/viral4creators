@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { CronModule } from '../cron/cron.module';
+import { FfmpegAdminModule } from '../ffmpeg-admin/ffmpeg-admin.module';
 import { AdminCronService } from '../cron/admin-cron.service';
 import { DemoStatusService } from '../ops-status/demo-status.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
@@ -19,7 +20,7 @@ import { AdminAttentionService } from './admin-attention.service';
  * которые читают настройки (список языков обучалки).
  */
 @Module({
-  imports: [AdminAuthModule, AdminPanelModule, CronModule],
+  imports: [AdminAuthModule, AdminPanelModule, CronModule, FfmpegAdminModule],
   controllers: [AdminAttentionController],
   providers: [
     AdminAttentionService,

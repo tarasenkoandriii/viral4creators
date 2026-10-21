@@ -55,13 +55,58 @@ export interface WatermarkPlan {
  * (если сторона не парсит как shell, лишняя пара `\"` просто часть
  * текста) — это чистое усиление защиты без даунсайда.
  */
-function escapeDrawtext(text: string): string {
+/*
+ * Правка 21.10.2026 (сверка корпуса с собственным ffmpeg-server, EXEC):
+ * прежнее экранирование искажало текст. `\'` внутри `text='…'` не
+ * экранирует кавычку (в одинарных кавычках FFmpeg обратный слеш
+ * буквален — кавычка закрывала значение), а `\%` снимался уровнем опций
+ * и до `drawtext` доходил голый `%` («Stray %»). `$` и обратная кавычка в
+ * двойных кавычках `-vf "…"` — подстановка shell, свой сервер отвергает
+ * такую строку (422).
+ *
+ * Теперь уровни экранирования разложены явно, текст на кадре — ровно
+ * исходный (проверено рендером против `textfile`):
+ *  1. `expansion=none` — `drawtext` не разбирает `%{…}` и `\`: третьего
+ *     уровня нет;
+ *  2. уровень опций фильтра (`av_get_token(":")`) и уровень графа
+ *     (`av_get_token("[],;")`): каждый ASCII-знак, кроме букв и цифр,
+ *     получает `\` — дважды, по разу на уровень (`\x` → `x` на любом
+ *     уровне); не-ASCII (кириллица) проходит как есть;
+ *  3. двойные кавычки shell-подобной строки: `\`, `"`, `$`, обратная
+ *     кавычка → с `\` (внутри `"…"` это ровно сами символы).
+ */
+const AV_SPECIAL = /[\x20-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]/g;
+function avEscape(text: string): string {
+  return text.replace(AV_SPECIAL, (c) => `\\${c}`);
+}
+/**
+ * FF-INT-05 (аудит 21.10.2026): для обычного текста команда — байт в байт
+ * как до правки (`text='…'`, прежнее экранирование), чтобы тело запроса к
+ * hosted не менялось. Новое экранирование — только если в тексте есть
+ * символы, которые прежний генератор ломал: `'` `%` `$` обратная кавычка
+ * `\` `:`.
+ */
+export const DRAWTEXT_SPECIAL = /['%$`\\:]/;
+
+/** Прежнее экранирование (origin/main) — для обычных текстов. */
+function legacyEscapeDrawtext(text: string): string {
   return text
     .replace(/\\/g, '\\\\\\\\')
     .replace(/:/g, '\\:')
     .replace(/'/g, "\\'")
     .replace(/%/g, '\\%')
     .replace(/"/g, '\\"');
+}
+
+/** Значение `drawtext` до `:fontsize=…`: прежний вид или новый. */
+export function drawtextTextParam(text: string): string {
+  return DRAWTEXT_SPECIAL.test(text)
+    ? `expansion=none:text=${escapeDrawtext(text)}`
+    : `text='${legacyEscapeDrawtext(text)}'`;
+}
+
+export function escapeDrawtext(text: string): string {
+  return avEscape(avEscape(text)).replace(/[\\"$`]/g, (c) => `\\${c}`);
 }
 
 interface IntensityParams {
@@ -104,13 +149,13 @@ export function buildWatermarkPlan(
   intensity: WatermarkIntensityValue,
 ): WatermarkPlan {
   const params = INTENSITY_PARAMS[intensity];
-  const escaped = escapeDrawtext(text);
+  const textParam = drawtextTextParam(text);
   const outputName = 'watermarked.mp4';
 
   const drawtextFilters = params.positions
     .map(
       (pos) =>
-        `drawtext=text='${escaped}':fontsize=${params.fontsizeExpr}:fontcolor=white@${params.opacity}:` +
+        `drawtext=${textParam}:fontsize=${params.fontsizeExpr}:fontcolor=white@${params.opacity}:` +
         `bordercolor=black@${Math.min(params.opacity + 0.15, 1)}:borderw=2:x=${pos.x}:y=${pos.y}`,
     )
     .join(',');

@@ -158,8 +158,8 @@ export function AdminNav() {
 
   return (
     <>
-      {/* Мобильная шапка: «Меню» + где я. На десктопе скрыта CSS. */}
-      <div className="admin-topbar">
+      {/* Мобильная шапка: «Меню» + где я. На десктопе скрыта CSS. <header> — ориентир для диктора (axe region). */}
+      <header className="admin-topbar">
         <button
           type="button"
           ref={menuButtonRef}
@@ -171,7 +171,7 @@ export function AdminNav() {
           <span aria-hidden="true">☰</span> Меню
         </button>
         <span className="admin-topbar-title">{current ?? 'Админка'}</span>
-      </div>
+      </header>
 
       {drawerOpen && (
         <div className="admin-nav-backdrop" aria-hidden="true" onClick={() => closeDrawer(true)} />

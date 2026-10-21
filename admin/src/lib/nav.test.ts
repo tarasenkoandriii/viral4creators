@@ -3,8 +3,10 @@
 //   npx --prefix ../sites-landing tsx src/lib/nav.test.ts
 // Next не трогает этот файл: в app/ маршрутами становятся только
 // page/route/layout, а lib/ — не app/.
-//  1. Все 35 рабочих страниц в меню ровно по одному разу; каждая ссылка
-//     ведёт на существующую страницу; групп восемь, в каждой 2–6.
+//  1. Все 36 рабочих страниц в меню ровно по одному разу; каждая ссылка
+//     ведёт на существующую страницу; групп восемь, в каждой 2–6
+//     (кроме «Эксплуатации» — 7: туда по ТЗ FFmpeg §13.1 добавлена вкладка
+//     «FFmpeg: обработка»).
 //  2. Активный пункт: root — только точное совпадение, вложенные
 //     маршруты отмечают родителя, соседи с общим началом — нет.
 //  3. Запомненное раскрытие: мусор и чужие ключи отбрасываются.
@@ -28,11 +30,13 @@ const appDir = path.join(__dirname, '..', 'app');
 
 // ── 1 ──
 const hrefs = ALL_NAV_LINKS.map((l) => l.href);
-assert.equal(hrefs.length, 35, 'в меню 35 рабочих страниц');
+assert.equal(hrefs.length, 36, 'в меню 36 рабочих страниц');
 assert.equal(new Set(hrefs).size, hrefs.length, 'без дублей');
 assert.equal(NAV_GROUPS.length, 8, 'восемь групп');
 for (const g of NAV_GROUPS) {
-  assert.ok(g.links.length >= 2 && g.links.length <= 6, `группа «${g.label}»: 2–6 пунктов`);
+  // «Эксплуатация» — 7: ТЗ FFmpeg §13.1 требует пункт именно в этой группе.
+  const max = g.key === 'ops' ? 7 : 6;
+  assert.ok(g.links.length >= 2 && g.links.length <= max, `группа «${g.label}»: 2–${max} пунктов`);
 }
 assert.equal(new Set(NAV_GROUPS.map((g) => g.key)).size, NAV_GROUPS.length, 'ключи групп уникальны');
 for (const href of hrefs) {
@@ -51,8 +55,16 @@ assert.deepEqual([...topLevelPages].sort(), [...hrefs].sort(), 'меню пок�
 const ops = NAV_GROUPS.find((g) => g.key === 'ops');
 assert.deepEqual(
   ops?.links.map((l) => l.href),
-  ['/cron', '/ui-snapshots', '/testing', '/telemetry', '/soniox', '/settings'],
+  ['/cron', '/ui-snapshots', '/testing', '/telemetry', '/soniox', '/ffmpeg', '/settings'],
 );
+// ТЗ FFmpeg §13.1: ровно одна ссылка на вкладку, ровно с этой подписью, в
+// «Эксплуатации»; никаких второго кабинета или дублей с другим адресом.
+const ffmpegLinks = ALL_NAV_LINKS.filter((l) => l.href === '/ffmpeg' || /ffmpeg/i.test(l.label) || l.href.startsWith('/ffmpeg'));
+assert.equal(ffmpegLinks.length, 1, 'одна ссылка на FFmpeg');
+assert.deepEqual(ffmpegLinks[0], { href: '/ffmpeg', label: 'FFmpeg: обработка' });
+assert.equal(activeGroupKey('/ffmpeg?state=failed&job=selfhosted:abc'), 'ops');
+assert.equal(activeLabel('/ffmpeg'), 'FFmpeg: обработка');
+assert.ok(existsSync(path.join(appDir, 'ffmpeg', 'page.tsx')), 'admin/src/app/ffmpeg/page.tsx');
 // P-R-ADM: «Reddit» — в «Продвижении», последним пунктом группы.
 const growth = NAV_GROUPS.find((g) => g.key === 'growth');
 assert.equal(growth?.links.at(-1)?.href, '/reddit', '«Reddit» в группе «Продвижение»');

@@ -89,6 +89,7 @@ import { GreetingSessionEditModule } from './modules/greeting-session-edit/greet
 import { TutorialHelpModule } from './modules/tutorial-help/tutorial-help.module';
 import { OpsStatusModule } from './modules/ops-status/ops-status.module';
 import { AdminAttentionModule } from './modules/admin-attention/admin-attention.module';
+import { FfmpegAdminModule } from './modules/ffmpeg-admin/ffmpeg-admin.module';
 // Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
 // ТЗ на бэкенд §6). Tender/Contract/Escrow сознательно не подключены —
 // они не существуют в коде, пока не появится сигнал спроса (§19.4).
@@ -183,6 +184,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     TutorialHelpModule,
     OpsStatusModule,
     AdminAttentionModule,
+    FfmpegAdminModule,
     CreatorProfileModule,
     PortfolioModule,
     CreatorInquiryModule,

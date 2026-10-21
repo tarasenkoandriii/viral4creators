@@ -1525,6 +1525,8 @@ model VideoAudioTrack {
 
   @@unique([sessionId, locale])
   @@index([sessionId])
+  /// Вкладка «FFmpeg»: владелец задачи по её id (миграция 20270126090000).
+  @@index([mixJobId])
   @@map("video_audio_tracks")
 }
 
@@ -3747,6 +3749,8 @@ model TutorialVideoAsset {
   /// заводить поле под такой фильтр без индекса значит забыть
   /// собственный аргумент через абзац (найдено аудитом ТЗ §14 п.9).
   @@index([clientSiteDraftId])
+  /// Вкладка «FFmpeg»: владелец задачи по её id (миграция 20270126090000).
+  @@index([assemblyJobId])
   @@map("tutorial_video_assets")
 }
 
@@ -3810,6 +3814,8 @@ model TutorialVideoVersion {
   @@unique([assetId, idempotencyKey])
   /// Опрос незавершённых сборок версий — на каждом тике крона.
   @@index([status])
+  /// Вкладка «FFmpeg»: владелец задачи по её id (миграция 20270126090000).
+  @@index([jobId])
   @@map("tutorial_video_versions")
 }
 
@@ -3924,6 +3930,8 @@ model TutorialDemoQualityCheck {
   /// `running` с истёкшей арендой.
   @@index([status, nextAttemptAt])
   @@index([dedupeKey])
+  /// Вкладка «FFmpeg»: владелец задачи по её id (миграция 20270126090000).
+  @@index([signalsJobId])
   @@map("tutorial_demo_quality_checks")
 }
 
@@ -4568,6 +4576,8 @@ model PortfolioItem {
   @@index([status, createdAt])
   // Та же история, что у `creator_profiles.isFeatured` выше.
   @@index([collectionTag])
+  /// Вкладка «FFmpeg»: владелец задачи по её id (миграция 20270126090000).
+  @@index([watermarkJobId])
   @@map("portfolio_items")
 }
 
@@ -5370,6 +5380,119 @@ model StoryVideoSegment {
   /// F1 (A-S2-3): retention finds speech of deleted voices.
   @@index([userVoiceId])
   @@map("story_video_segments")
+}
+
+// FFmpeg-server v1.1 §11/§13.1 — маршрутизация hosted|selfhosted и журнал оператора.
+/// Одна строка `id = 'default'`: провайдер НОВЫХ задач ffmpeg, canary-список
+/// продуктов и circuit breaker своего сервера. Действует только при env-гейте
+/// FFMPEG_SELFHOSTED_ENABLED; уже принятые задачи маршрутизируются по префиксу
+/// своего id, не по этой строке.
+model FfmpegRouting {
+  id                 String    @id @default("default")
+  /// CAS-версия: правка из админки только с expected revision (иначе 409).
+  revision           Int       @default(1)
+  /// hosted | selfhosted (решение владельца 21.10.2026: основной — selfhosted).
+  defaultProvider    String    @default("selfhosted")
+  /// Непустой — к selfhosted идут ТОЛЬКО эти продукты (ограничитель canary).
+  canaryProducts     String[]  @default([])
+  updatedAt          DateTime  @default(now())
+  updatedBy          String?
+  /// Отказы своего сервера подряд в окне (до приёма / инфраструктурные провалы).
+  breakerFailures      Int       @default(0)
+  /// Последний учтённый отказ: старше окна — счёт начинается заново.
+  breakerLastFailureAt DateTime?
+  /// Пока в будущем — новые задачи сразу к hosted (fallback).
+  breakerOpenUntil     DateTime?
+  /// Half-open: аренда единственной пробной задачи (CAS); остальные — к hosted.
+  breakerProbeUntil    DateTime?
+  /// Пробная задача: её успешное завершение закрывает breaker.
+  breakerProbeJobId    String?
+
+  @@map("ffmpeg_routing")
+}
+
+/// Провалы задач своего сервера, уже учтённые breaker (FF-INT-08): одна
+/// задача — один отказ при любом числе опросов и инстансов. 30 дней.
+model FfmpegBreakerJob {
+  jobId     String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("ffmpeg_breaker_jobs")
+}
+
+/// Отправки ffmpeg (FF-INT-02): провайдер и ключ закрепляются за операцией
+/// ДО сетевого вызова. Повтор операции с неподтверждённым исходом у своего
+/// сервера сначала сверяется у него по ключу — при любом breaker/default.
+/// Без URL, тела и команд; 30 дней (крон cleanup-sessions).
+model FfmpegSubmission {
+  id             String   @id @default(uuid())
+  /// Idempotency-Key своего сервера: ключ операции или sha256 тела.
+  idempotencyKey String   @unique
+  /// sha256 тела: тот же ключ с другим телом — новая отправка, не повтор.
+  bodyHash       String
+  /// Номер попытки (FF-INT-14): после терминального провала задачи новая
+  /// отправка той же операции идёт с ключом `<ключ>:r<n>`.
+  attempt        Int      @default(0)
+  product        String?
+  operationKey   String?
+  /// hosted | selfhosted — у кого отправка сейчас (fallback меняет на hosted).
+  provider       String
+  /// sending | accepted | refused | unknown
+  state          String
+  jobId          String?
+  /// refused | not-found | breaker-open — почему ушла к hosted.
+  fallbackReason String?
+  /// Начало последней отправки: от него считается дедлайн фиксации сервера.
+  sentAt         DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("ffmpeg_submissions")
+}
+
+/// Переходы новой задачи к hosted (fallback своего сервера, ТЗ v1.1 §11 в
+/// редакции владельца): счётчик для вкладки «FFmpeg». Без URL, тела и id
+/// операций; хранится 30 дней (крон cleanup-sessions).
+model FfmpegFallbackEvent {
+  id        String   @id @default(uuid())
+  /// refused | not-found | breaker-open
+  reason    String
+  /// Код отказа своего сервера (QUEUE_FULL, NOT_READY, …) или HTTP/сетевой класс.
+  code      String?
+  product   String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("ffmpeg_fallback_events")
+}
+
+/// Append-only журнал действий оператора на вкладке «FFmpeg» (ТЗ §13.1).
+/// Запрос пишется ДО отправки (phase = requested), исход — отдельной строкой
+/// после (succeeded | failed | unknown). Без токенов, команд, URL и текстов;
+/// хранится 90 дней (уборка — крон cleanup-sessions).
+model FfmpegOperatorAction {
+  id                String   @id @default(uuid())
+  /// UUID операции от клиента — ключ идемпотентности мутации.
+  operationId       String
+  phase             String
+  actorUserId       String
+  action            String
+  jobId             String?
+  clientOperationId String?
+  reason            String?
+  oldRevision       Int?
+  newRevision       Int?
+  /// Очищенный итог (без секретов); у requested — null.
+  result            Json?
+  correlationId     String
+  createdAt         DateTime @default(now())
+
+  @@unique([operationId, phase])
+  @@index([createdAt])
+  @@index([jobId, createdAt])
+  @@map("ffmpeg_operator_actions")
 }
 
 // WP1

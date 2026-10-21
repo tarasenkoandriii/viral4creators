@@ -5,7 +5,7 @@
 
 COMPOSE = docker compose -f docker-compose.dev.yml
 
-.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-publisher-site ci-integrations ci-relay ci-worker
+.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-publisher-site ci-integrations ci-relay ci-worker ci-ffmpeg-server
 
 up:
 	@test -f .env.docker || cp .env.docker.example .env.docker
@@ -99,6 +99,7 @@ ci:
 	$(MAKE) ci-integrations
 	$(MAKE) ci-relay
 	$(MAKE) ci-worker
+	$(MAKE) ci-ffmpeg-server
 	$(MAKE) ci-docs
 
 # Лендинг клиентских сайтов (Л0–Л5; джоба `sites-landing` в CI): типы,
@@ -186,6 +187,14 @@ ci-worker:
 	cd browser-worker && npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
 	cd browser-worker && npx tsc -p tsconfig.json --noEmit --incremental false
 	cd browser-worker && npx jest -c jest.config.js --ci
+
+# Собственный FFmpeg API (джоба `ffmpeg-server` в CI): типы, линт, тесты
+# (сквозные — с настоящим ffmpeg из PATH и backend-клиентом), сборка.
+ci-ffmpeg-server:
+	cd ffmpeg-server && npx tsc -p tsconfig.eslint.json --noEmit
+	cd ffmpeg-server && npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+	cd ffmpeg-server && npx jest --ci --runInBand
+	cd ffmpeg-server && npm run -s build
 
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:

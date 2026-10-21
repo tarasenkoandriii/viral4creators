@@ -42,3 +42,4 @@ jest-results.json
 !sites-landing/.env.example
 !publisher-site/.env.example
 !browser-worker/.env.example
+!ffmpeg-server/.env.example

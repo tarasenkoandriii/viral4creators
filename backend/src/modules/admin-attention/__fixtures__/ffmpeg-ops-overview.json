@@ -1,0 +1,65 @@
+{
+  "data": {
+    "generated_at": "2026-10-21T11:01:09.907Z",
+    "control": {
+      "mode": "active",
+      "revision": 1,
+      "reason": null,
+      "updated_at": "2026-10-21T11:01:09.713Z"
+    },
+    "ready": {
+      "ready": true,
+      "checks": {
+        "sqlite": true,
+        "migrations": true,
+        "executor": true,
+        "capabilities": true,
+        "disk": true
+      },
+      "reasons": [],
+      "checked_at": "2026-10-21T11:01:09.907Z"
+    },
+    "queue": {
+      "counts": {
+        "failed": 2
+      },
+      "failed_24h": 2,
+      "errors_24h": {
+        "OOM": 2
+      },
+      "oom_24h": 2,
+      "oldest_queued_age_sec": null,
+      "max_queued": 20,
+      "max_queued_per_client": 10
+    },
+    "active": null,
+    "executor": {
+      "heartbeat_at": "2026-10-21T11:01:09.908Z",
+      "fresh": true,
+      "busy": false,
+      "ffmpeg_version": "fake-6.1",
+      "started_at": null,
+      "resources": {
+        "idle": true,
+        "sampled_at": null
+      }
+    },
+    "capabilities": {
+      "ok": true,
+      "missing": [],
+      "checked_at": "2026-10-21T11:01:09.908Z",
+      "ffmpeg_version": "fake-6.1"
+    },
+    "disk": {
+      "measured_at": "2026-10-21T11:01:09.861Z",
+      "free_bytes": 21624025088,
+      "min_free_bytes": 1024,
+      "workspaces_bytes": 0,
+      "max_workspaces_bytes": 16106127360,
+      "outputs_bytes": 0,
+      "max_outputs_bytes": 10737418240
+    },
+    "limits_revision": 1,
+    "image_digest": null
+  }
+}

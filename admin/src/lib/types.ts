@@ -2488,3 +2488,377 @@ export interface StoryTalesActionInput {
   /** bind-job: ссылка на вход задания из кабинета FFmpeg API — отпечаток отправки (≤2048). */
   renderInputUrl?: string;
 }
+
+// ── FFmpeg: обработка (ТЗ FFmpeg-server v1.1 §13.1, пакет ADM) ──
+// Модель экрана вкладки `/ffmpeg`. Ответы backend `/admin/ffmpeg/*`
+// (backend/src/modules/ffmpeg-admin: снимки `{state, fetchedAt, error,
+// data}` с сырыми данными ops-API сервера в snake_case) разбираются в эту
+// модель в `lib/ffmpeg.ts`. Ни ключ VPS, ни исходные input URLs, ни
+// тексты команд сюда не попадают: в карточке — только имена файлов,
+// метаданные и очищенный stderr.
+
+export type FfmpegProvider = 'hosted' | 'selfhosted';
+export type FfmpegProduct =
+  | 'postprod'
+  | 'actors'
+  | 'audio-track'
+  | 'portfolio'
+  | 'story'
+  | 'tutorial-runner'
+  | 'tutorial-video-versions'
+  | 'shared-video'
+  | 'client-site-tutorial';
+/** Публичные статусы задачи (§5.3) + `unknown` — исход не подтверждён/не распознан. */
+export type FfmpegJobState = 'queued' | 'processing' | 'succeeded' | 'failed' | 'canceled' | 'unknown';
+/** Режим сервера (`control_state.mode`): paused — worker стоит; drained — ещё и приём закрыт; recovery — после потери БД. */
+export type FfmpegAcceptMode = 'active' | 'paused' | 'drained' | 'recovery';
+export type FfmpegWorkerState = 'running' | 'idle' | 'paused' | 'executor-down';
+/** Судьба файлов результата: `purging` — ссылки отозваны, удаление идёт. */
+export type FfmpegArtifactsState = 'available' | 'expired' | 'purged' | 'purging' | 'none';
+/** Состояние снимка backend: stale — последние удачные данные, error — данных нет. */
+export type FfmpegSourceState = 'ok' | 'stale' | 'error' | 'not-configured' | 'unsupported';
+
+/**
+ * Значение с моментом наблюдения. `observedAt` — когда backend последний
+ * раз получил его от источника; `stale` — источник сейчас не ответил и
+ * показано последнее известное (или `value: null`, если его нет).
+ */
+export interface FfmpegObserved<T> {
+  value: T | null;
+  observedAt: string | null;
+  stale?: boolean;
+  reason?: string | null;
+}
+
+export interface FfmpegRouting {
+  /** null — таблица маршрутизации недоступна (менять нельзя). */
+  revision: number | null;
+  defaultProvider: FfmpegProvider;
+  /** Canary allowlist: продукты, чьи НОВЫЕ задачи идут на selfhosted. */
+  canaryProducts: FfmpegProduct[];
+  /** env-гейт `FFMPEG_SELFHOSTED_ENABLED` (меняется только деплоем). */
+  selfhostedEnabled: boolean;
+  /** Адрес и ключ своего сервера заданы в backend. */
+  selfhostedConfigured: boolean;
+  /** Что реально получит новая задача без canary-продукта. */
+  effectiveDefaultProvider: FfmpegProvider;
+  effectiveCanaryProducts: FfmpegProduct[];
+  updatedAt: string | null;
+  /** Запасной путь: при отказе своего сервера до приёма новая задача уходит к hosted (FFMPEG_FALLBACK_HOSTED + ключ). */
+  fallbackToHosted: boolean;
+  /** Circuit breaker своего сервера: открыт — новые задачи идут к hosted до `openUntil`. */
+  breaker: FfmpegBreaker | null;
+}
+
+export interface FfmpegBreaker {
+  open: boolean;
+  openUntil: string | null;
+  /** Отказов подряд / порог открытия. */
+  failures: number;
+  threshold: number | null;
+}
+
+export interface FfmpegReady {
+  ready: boolean;
+  /** Конкретная причина отказа readiness словами. */
+  reason: string | null;
+  checkedAt: string | null;
+}
+
+export interface FfmpegJobCounts {
+  active: number;
+  queued: number;
+  /** Ошибочные за последние 24 часа. */
+  failed: number;
+  /** Возраст старейшей ожидающей задачи, секунды; null — очередь пуста. */
+  oldestQueuedAgeSec: number | null;
+  maxQueued: number | null;
+}
+
+export interface FfmpegDisk {
+  freeBytes: number;
+  minFreeBytes: number | null;
+  workspacesBytes: number | null;
+  workspacesLimitBytes: number | null;
+  outputsBytes: number | null;
+  outputsLimitBytes: number | null;
+  measuredAt: string | null;
+}
+
+/** Текущие CPU/RAM executor (`executor.resources` ops-overview). */
+export interface FfmpegExecutorUsage {
+  /** Простой: активной попытки нет, замеров нет — это не «0%». */
+  idle: boolean;
+  /** % одного ядра между двумя замерами (лимит 2 CPU = 200%). */
+  cpuPercent: number | null;
+  rssBytes: number | null;
+  peakRssBytes: number | null;
+  sampledAt: string | null;
+  /** Замер старше порога heartbeat. */
+  stale: boolean;
+}
+
+export interface FfmpegImage {
+  ffmpegVersion: string | null;
+  imageDigest: string | null;
+}
+
+export interface FfmpegActiveJob {
+  id: string;
+  operationId: string | null;
+  stage: string | null;
+  progress: number | null;
+}
+
+export interface FfmpegOverview {
+  generatedAt: string;
+  /** Состояние снимка своего сервера. */
+  source: FfmpegSourceState;
+  /** Сервер недоступен: значения ниже — последние известные или null. */
+  stale: boolean;
+  staleReason: string | null;
+  routing: FfmpegObserved<FfmpegRouting>;
+  acceptMode: FfmpegObserved<FfmpegAcceptMode>;
+  worker: FfmpegObserved<FfmpegWorkerState>;
+  activeJob: FfmpegActiveJob | null;
+  ready: FfmpegObserved<FfmpegReady>;
+  jobs: FfmpegObserved<FfmpegJobCounts>;
+  disk: FfmpegObserved<FfmpegDisk>;
+  executor: FfmpegObserved<FfmpegExecutorUsage>;
+  image: FfmpegObserved<FfmpegImage>;
+  /** Вызовы ffmpeg за 24 ч по журналу расходов (расчёт, не счёт провайдера). */
+  usage24h: FfmpegObserved<{ hosted: number; selfhosted: number }>;
+  /** Новые задачи, ушедшие к hosted вместо своего сервера, за 24 ч. */
+  fallbacks24h: FfmpegObserved<number>;
+  hosted: { configured: boolean; note: string | null } | null;
+  /** Права текущего пользователя по ответу сервера; null — не сообщены. */
+  permissions: string[] | null;
+}
+
+export interface FfmpegJobRow {
+  /** Id провайдера: `selfhosted:<uuid>` или прежний id hosted. */
+  id: string;
+  provider: FfmpegProvider;
+  product: FfmpegProduct | string | null;
+  /** client_operation_id — операция продукта. */
+  operationId: string | null;
+  state: FfmpegJobState;
+  /** downloading / probing / running / validating / publishing. */
+  stage: string | null;
+  /** Факт исполнения: `succeeded` при state=failed + OUTPUT_EXPIRED/PURGED. */
+  executionStatus: FfmpegJobState | null;
+  errorCode: string | null;
+  attempts: number | null;
+  queueMs: number | null;
+  runMs: number | null;
+  outputBytes: number | null;
+  artifacts: FfmpegArtifactsState | null;
+  createdAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface FfmpegJobsQuery {
+  cursor?: string;
+  state?: string;
+  provider?: string;
+  product?: string;
+  period?: string;
+  clientOperationId?: string;
+  jobId?: string;
+}
+
+export interface FfmpegJobsPage {
+  provider: FfmpegProvider;
+  source: FfmpegSourceState;
+  items: FfmpegJobRow[];
+  nextCursor: string | null;
+  observedAt: string | null;
+  stale: boolean;
+  staleReason: string | null;
+  /** Фильтр по продукту применён только к текущей странице (ops-API его не знает). */
+  productFilterPageOnly: boolean;
+}
+
+export interface FfmpegTimelineEntry {
+  at: string | null;
+  event: string;
+  stage: string | null;
+  note: string | null;
+}
+
+export interface FfmpegFileInfo {
+  /** Только имя (ключ входа / имя результата), никогда не URL. */
+  name: string;
+  bytes: number | null;
+  sha256: string | null;
+  mime: string | null;
+  format: string | null;
+  durationSec: number | null;
+  streams: Array<{
+    type: string;
+    codec: string | null;
+    width?: number;
+    height?: number;
+    fps?: number;
+    sampleRate?: number;
+    channels?: number;
+    durationSec?: number | null;
+  }>;
+  purgedAt: string | null;
+}
+
+export interface FfmpegResourcePeaks {
+  wallMs: number | null;
+  cpuMs: number | null;
+  peakRssKb: number | null;
+  inputBytes: number | null;
+  outputBytes: number | null;
+  queueDelayMs: number | null;
+  exitCode: number | null;
+}
+
+export interface FfmpegAttempt {
+  n: number;
+  status: string | null;
+  outcome: string | null;
+  errorCode: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  signal: string | null;
+  wallMs: number | null;
+  cpuMs: number | null;
+  peakRssKb: number | null;
+}
+
+export interface FfmpegOwnerLink {
+  label: string;
+  /** Внутренний путь админки (проверен на `/…`). */
+  href: string;
+}
+
+export interface FfmpegJobDetail extends FfmpegJobRow {
+  source: FfmpegSourceState;
+  observedAt: string | null;
+  stale: boolean;
+  staleReason: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  expiresAt: string | null;
+  progress: number | null;
+  timeline: FfmpegTimelineEntry[];
+  inputs: FfmpegFileInfo[];
+  outputs: FfmpegFileInfo[];
+  resources: FfmpegResourcePeaks | null;
+  attemptsDetail: FfmpegAttempt[];
+  ffmpegVersion: string | null;
+  imageDigest: string | null;
+  /** Очищенный хвост stderr, ≤64 KiB. */
+  stderr: string | null;
+  stderrTruncated: boolean;
+  limitsRevision: number | null;
+  /** Исходные операции продукта (Story/Tutorial/сессия…). */
+  owners: FfmpegOwnerLink[];
+  /** Журнал операторских действий по задаче. */
+  actions: FfmpegOperatorAction[];
+}
+
+export interface FfmpegOperatorAction {
+  id: string;
+  at: string;
+  actorId: string | null;
+  action: string;
+  jobId: string | null;
+  operationId: string | null;
+  reason: string | null;
+  oldRevision: number | null;
+  newRevision: number | null;
+  /** requested — записано до отправки; succeeded/failed — подтверждено; unknown — исход не установлен. */
+  result: string;
+  correlationId: string | null;
+}
+
+export interface FfmpegLimitsRevision {
+  revision: number;
+  at: string | null;
+  actor: string | null;
+  reason: string | null;
+}
+
+export interface FfmpegControlEvent {
+  at: string | null;
+  event: string;
+  from: string | null;
+  to: string | null;
+  reason: string | null;
+}
+
+export interface FfmpegLimitsView {
+  source: FfmpegSourceState;
+  observedAt: string | null;
+  stale: boolean;
+  staleReason: string | null;
+  revision: number | null;
+  /** Эффективные лимиты (поля `LimitsProfile` сервера, кроме revision). */
+  effective: Record<string, number>;
+  /** Верхние границы конфигурации деплоя (`ceiling`): выше UI не предлагает. */
+  bounds: Record<string, number>;
+  /** Какие лимиты backend разрешает менять. */
+  editable: string[];
+  routing: FfmpegRouting | null;
+  /** Журнал операторских действий обслуживания (append-only, 90 дней), новые сверху. */
+  history: FfmpegOperatorAction[];
+  /** Ревизии лимитов на сервере. */
+  serverHistory: FfmpegLimitsRevision[];
+  /** Смены режима pause/drain/resume на сервере. */
+  controlHistory: FfmpegControlEvent[];
+}
+
+/** Тело мутации: один `operationId` (UUID) на диалог — повтор безопасен. */
+export interface FfmpegMutationInput {
+  operationId: string;
+  reason?: string;
+}
+export interface FfmpegResumeInput extends FfmpegMutationInput {
+  /** Выход из recovery: оператор подтвердил сверку очереди с продуктовой БД (право configure, причина обязательна). */
+  reconciled?: true;
+}
+export interface FfmpegPurgeInput extends FfmpegMutationInput {
+  reason: string;
+  confirmIrreversible: true;
+}
+export interface FfmpegLimitsInput extends FfmpegMutationInput {
+  expectedRevision: number;
+  limits: Record<string, number>;
+}
+export interface FfmpegRoutingInput extends FfmpegMutationInput {
+  expectedRevision: number;
+  defaultProvider: FfmpegProvider;
+  canaryProducts: FfmpegProduct[];
+  /** Отдельное подтверждение владельца для перевода default → selfhosted. */
+  confirmSelfhostedDefault?: boolean;
+}
+export interface FfmpegDownloadLinkInput {
+  operationId: string;
+  file: string;
+  reason?: string;
+}
+
+/** Исход мутации (`MutationOutcome` backend). */
+export interface FfmpegMutationResult {
+  operationId: string;
+  correlationId: string | null;
+  action: string;
+  outcome: 'succeeded' | 'failed' | 'unknown';
+  /** Повтор уже записанной операции: действие НЕ выполнялось заново. */
+  replayed: boolean;
+  message: string | null;
+  result: unknown;
+}
+
+export interface FfmpegDownloadLink {
+  file: string;
+  url: string;
+  expiresAt: string | null;
+  mime: string | null;
+}

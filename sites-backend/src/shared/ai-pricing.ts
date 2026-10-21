@@ -41,6 +41,11 @@ export type AiProvider =
   | 'SERPAPI'
   | 'YOUTUBE'
   | 'FFMPEG'
+  // FFmpeg-server v1.1 §12: та же модель `ffmpeg-api` и та же оценка (списания
+  // и потолки не меняются), но задача ушла на собственный сервер — строка
+  // отделена от счёта внешнего провайдера. В `AI_PROVIDERS` (балансы) не
+  // входит: баланса у своего сервера нет. Ставит `ffmpegUsageProvider`.
+  | 'FFMPEG_SELFHOSTED'
   | 'ELEVENLABS'
   // doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md — второй провайдер синтеза,
   // переключаемый TTS_PROVIDER (tts.module.ts), не замена ELEVENLABS.

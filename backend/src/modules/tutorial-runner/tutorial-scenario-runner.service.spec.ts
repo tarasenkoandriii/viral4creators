@@ -4652,6 +4652,39 @@ describe('TutorialScenarioRunnerService', () => {
         expect.anything(),
       );
     });
+
+    it('poll: инфраструктурный провал своего FFmpeg (retryOnFallback) — infra, попытка содержимого не тратится', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      stubAssets(prisma, [
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: 'ts-1',
+          frameCount: 1,
+          assemblyJobId: 'selfhosted:job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({
+        status: 'failed',
+        error: 'OOM',
+        errorCode: 'OOM',
+        retryOnFallback: true,
+      });
+
+      await service.run();
+
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assemblyStatus: 'failed',
+            assemblyError: 'infra: OOM',
+            contentHash: null,
+          }),
+        }),
+      );
+    });
   });
 });
 

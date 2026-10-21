@@ -315,6 +315,7 @@ export class AudioTrackService {
         },
         outputs: [plan.outputName],
         commands: [plan.command],
+        product: 'audio-track',
       });
       return job.jobId;
     } catch (e) {

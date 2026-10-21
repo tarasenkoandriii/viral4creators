@@ -56,7 +56,10 @@ import {
 } from '../../common/subtitles';
 import { planPostProduction } from '../../common/postprod';
 import { aiVideoMetadata } from '../../common/ai-marking';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { HedraClientService } from './hedra-client.service';
 import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
@@ -727,11 +730,13 @@ export class ActorsService {
             inputs: { source: rawUrl, subs: freshVideo.subtitleUrl! },
             outputs: [plan.outputName],
             commands: [plan.command],
+            product: 'actors',
           });
           await this.aiUsage.record({
             operation: 'reframe',
             model: 'ffmpeg-api',
             sessionId,
+            ...ffmpegUsageProvider(job.jobId),
           });
           const withJob: AvatarVideo = {
             ...freshVideo,

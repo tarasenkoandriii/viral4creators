@@ -39,7 +39,10 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
   CANVAS,
@@ -675,6 +678,9 @@ export class ClientSiteTutorialAdminService {
       inputs: plan.inputs,
       outputs: plan.outputs,
       commands: plan.commands,
+      product: 'client-site-tutorial',
+      // Строка актива заводится на каждую сборку: один ключ = одна попытка.
+      operationKey: `tutorial-asset:${asset.id}`,
     });
 
     // Расход за сборку. До сквозного аудита A+B+C он не писался ни
@@ -684,7 +690,7 @@ export class ClientSiteTutorialAdminService {
     // приём задачи, а не за её результат. `record` наружу не бросает
     // (внутри свой `catch`), поэтому окно до записи `assemblyJobId`
     // она не удлиняет.
-    await this.recordAssemblySpend(owner.userId);
+    await this.recordAssemblySpend(owner.userId, job.jobId);
 
     await this.prisma.tutorialVideoAsset.update({
       where: { id: asset.id },
@@ -896,8 +902,10 @@ export class ClientSiteTutorialAdminService {
         inputs: plan.inputs,
         outputs: plan.outputs,
         commands: plan.commands,
+        product: 'client-site-tutorial',
+        operationKey: `tutorial-asset:${asset.id}`,
       });
-      await this.recordAssemblySpend(owner.userId);
+      await this.recordAssemblySpend(owner.userId, job.jobId);
       await this.prisma.tutorialVideoAsset.update({
         where: { id: asset.id },
         data: {
@@ -939,11 +947,12 @@ export class ClientSiteTutorialAdminService {
    * Владелец — хозяин проекта, а не оператор, нажавший «Одобрить»: платит
    * продукт по заказу этого клиента. `record` наружу не бросает.
    */
-  private recordAssemblySpend(userId: string): Promise<void> {
+  private recordAssemblySpend(userId: string, jobId: string): Promise<void> {
     return this.aiUsage.record({
       operation: 'tutorial-video-assembly',
       model: 'ffmpeg-api',
       userId,
+      ...ffmpegUsageProvider(jobId),
     });
   }
 

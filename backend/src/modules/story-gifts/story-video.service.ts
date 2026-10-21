@@ -8,7 +8,10 @@ import {
 import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { ResembleService } from '../tts/resemble.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -1418,6 +1421,9 @@ export class StoryVideoService {
         outputs: planned.outputs,
         commands: planned.commands,
         retrySubmit: false,
+        product: 'story',
+        // One render row per attempt (A-S2-2): the key is the operation.
+        operationKey: `story-video:${id}`,
       });
       await this.prisma.storyVideoRender.updateMany({
         where: {
@@ -1431,6 +1437,7 @@ export class StoryVideoService {
         operation: 'story-video-assembly',
         model: 'ffmpeg-api',
         userId,
+        ...ffmpegUsageProvider(job.jobId),
       });
     } catch {
       // Unattempted claims cost nothing: release them. An attempted segment

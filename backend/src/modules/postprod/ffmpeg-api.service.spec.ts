@@ -93,7 +93,11 @@ describe('FfmpegApiService.submit — Idempotency-Key против двойно�
     expect(headersOf(1)['Idempotency-Key']).toBe(
       headersOf(0)['Idempotency-Key'],
     );
-    expect(ref).toEqual({ jobId: 'job1', status: 'queued' });
+    expect(ref).toEqual({
+      jobId: 'job1',
+      status: 'queued',
+      provider: 'hosted',
+    });
   });
 
   it('та же задача, отправленная заново, приходит под тем же ключом', async () => {
@@ -337,5 +341,16 @@ describe('Paid one-shot story export', () => {
       new FfmpegApiService().submit({ ...JOB, retrySubmit: false }),
     ).rejects.toThrow('503');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ffmpegUsageProvider — provider в журнале расходов без смены списаний', () => {
+  it('hosted — пусто (строка как раньше), selfhosted — FFMPEG_SELFHOSTED', async () => {
+    const { ffmpegUsageProvider } = await import('./ffmpeg-api.service');
+    expect(ffmpegUsageProvider('job-1')).toEqual({});
+    expect(ffmpegUsageProvider(null)).toEqual({});
+    expect(ffmpegUsageProvider('selfhosted:u')).toEqual({
+      provider: 'FFMPEG_SELFHOSTED',
+    });
   });
 });

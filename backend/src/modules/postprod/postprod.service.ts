@@ -103,7 +103,7 @@ import {
   SubtitleTheme,
 } from '../../common/subtitles';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
-import { FfmpegApiService } from './ffmpeg-api.service';
+import { FfmpegApiService, ffmpegUsageProvider } from './ffmpeg-api.service';
 import { ReplicateSeparationService } from '../audio-separation/replicate-separation.service';
 import { AudioSeparationSettingsService } from '../audio-separation/audio-separation-settings';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
@@ -599,11 +599,13 @@ export class PostProductionService {
         inputs,
         outputs: [plan.outputName],
         commands: [plan.command],
+        product: 'postprod',
       });
       await this.aiUsage.record({
         operation: 'reframe',
         model: 'ffmpeg-api',
         sessionId,
+        ...ffmpegUsageProvider(job.jobId),
       });
       this.logger.log(
         `постобработка запущена (задача ${job.jobId}): ` +
@@ -874,11 +876,13 @@ export class PostProductionService {
         inputs,
         outputs: [plan.outputName],
         commands: [plan.command],
+        product: 'postprod',
       });
       await this.aiUsage.record({
         operation: 'reframe',
         model: 'ffmpeg-api',
         sessionId,
+        ...ffmpegUsageProvider(job.jobId),
       });
       this.logger.log(
         `переозвучка запущена (задача ${job.jobId}) для сессии ${sessionId}`,
@@ -1142,6 +1146,7 @@ export class PostProductionService {
         inputs: { source: freshVideo.downloadUrl },
         outputs: items.map((i) => i.outputName),
         commands: items.map((i) => i.command),
+        product: 'postprod',
       });
       // Один вызов — одна запись в журнале расходов, независимо от числа
       // форматов внутри батча (решение владельца продукта, этап 75,
@@ -1151,6 +1156,7 @@ export class PostProductionService {
         operation: 'reframe',
         model: 'ffmpeg-api',
         sessionId,
+        ...ffmpegUsageProvider(job.jobId),
       });
       this.logger.log(
         `автоэкспорт запущен (задача ${job.jobId}): форматы ${items

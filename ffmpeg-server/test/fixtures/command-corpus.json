@@ -1,0 +1,621 @@
+{
+  "version": 1,
+  "generator": "backend/src/common/ffmpeg-corpus.ts:buildFfmpegCorpus",
+  "entries": [
+    {
+      "id": "postprod/crop-only",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:start",
+      "note": "только кроп 16:9→1:1, звук копируется (-map 0:a?)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -filter_complex \"[0:v]crop='floor(min(iw,ih*1.000000)/2)*2':'floor(min(ih,iw/1.000000)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1[v]\" -map \"[v]\" -map 0:a? -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a copy -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "postprod/voiceover-crop-subs-cards-music-sticker",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:start",
+      "note": "всё сразу: кроп, голос с adelay, подложка atrim/apad, SRT с кириллицей/UK и force_style, ASS-карточки, PNG-наклейка overlay, -metadata с ; и =",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4",
+          "voice": "https://inputs.test/postprod/voice.mp3",
+          "music": "https://inputs.test/postprod/music.mp3",
+          "cards": "https://inputs.test/postprod/cards.ass",
+          "sticker": "https://inputs.test/postprod/sticker.png",
+          "subs": "https://inputs.test/postprod/subs.srt"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -i {{music}} -i {{sticker}} -filter_complex \"[0:v]crop='floor(min(iw,ih*0.800000)/2)*2':'floor(min(ih,iw/0.800000)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1,subtitles={{subs}}:force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60',subtitles={{cards}}[vbase];[3:v]scale=302:-2[stk];[vbase][stk]overlay=W-w-43:H-h-43[v];[2:a]atrim=0:8,apad=whole_dur=8,volume=0.12[mus];[0:a]volume=0.15[bg];[1:a]adelay=480:all=1[vo];[bg][vo][mus]amix=inputs=3:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11[a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -metadata \"comment=ai_generated=1;digital_source_type=trainedAlgorithmicMedia;ai_persona=1\" -metadata \"description=AI-generated video with a synthetic likeness or voice of a real person\" -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "subs": "1\n00:00:00,200 --> 00:00:01,600\nПривіт! Ґанок, їжак, є ще й «лапки».\n\n2\n00:00:01,600 --> 00:00:03,000\nСъешь же ещё этих мягких булок: 100%\n\n3\n00:00:03,000 --> 00:00:04,200\nDon't panic — it's 10:30, O'Brien said \"hi\"\n\n4\n00:00:04,200 --> 00:00:05,500\nШрифт жирний  слеш; кома, крапка.\n",
+        "cards": "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: title,Arial,64,&H00FFFFFF,&H000000FF,&H99000000,&H00000000,1,0,0,0,100,100,0,0,3,8,0,8,80,80,230,1\nStyle: closing,Arial,52,&H00FFFFFF,&H000000FF,&H99000000,&H00000000,0,0,0,0,100,100,0,0,3,8,0,2,80,80,192,1\nStyle: credit,Arial,28,&H00E0E0E0,&H000000FF,&H66000000,&H00000000,0,0,0,0,100,100,0,0,3,5,0,2,60,60,58,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,title,,0,0,0,,{\\fad(250,250)}З днем народження, Олю!\nDialogue: 0,0:00:05.80,0:00:08.00,closing,,0,0,0,,{\\fad(250,250)}Обіймаю — твій Ґеник\nDialogue: 0,0:00:05.80,0:00:08.00,credit,,0,0,0,,{\\fad(250,250)}Music: «Ліс» by Автор (CC-BY)\n"
+      }
+    },
+    {
+      "id": "postprod/dub-two-stems-sidechain",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:reVoice",
+      "note": "дубляж с двумя стемами фона: amix normalize=0 стемов, asplit, aformat, sidechaincompress, loudnorm; тема bold",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4",
+          "voice": "https://inputs.test/postprod/voice.mp3",
+          "music": "https://inputs.test/postprod/music.mp3",
+          "bg1": "https://inputs.test/postprod/bg1.wav",
+          "bg2": "https://inputs.test/postprod/bg2.mp3",
+          "subs": "https://inputs.test/postprod/subs.srt"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -i {{music}} -i {{bg1}} -i {{bg2}} -filter_complex \"[0:v]subtitles={{subs}}:force_style='FontName=Arial,Bold=1,FontSize=28,PrimaryColour=&H0000D7FF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=70'[v];[2:a]atrim=0:8.04,apad=whole_dur=8.04,volume=0.12[mus];[3:a]atrim=0:8.04,apad=whole_dur=8.04[st0];[4:a]atrim=0:8.04,apad=whole_dur=8.04[st1];[st0][st1]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,volume=1[bgraw];[1:a]anull[vo];[vo]asplit=2[vo1][vosc];[bgraw]aformat=channel_layouts=stereo[bgfmt];[vosc]aformat=channel_layouts=stereo[voscfmt];[bgfmt][voscfmt]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=150[bg];[bg][vo1][mus]amix=inputs=3:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11[a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "subs": "1\n00:00:00,200 --> 00:00:01,600\nПривіт! Ґанок, їжак, є ще й «лапки».\n\n2\n00:00:01,600 --> 00:00:03,000\nСъешь же ещё этих мягких булок: 100%\n\n3\n00:00:03,000 --> 00:00:04,200\nDon't panic — it's 10:30, O'Brien said \"hi\"\n\n4\n00:00:04,200 --> 00:00:05,500\nШрифт жирний  слеш; кома, крапка.\n"
+      }
+    },
+    {
+      "id": "postprod/dub-one-stem",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:start",
+      "note": "дубляж с одним стемом и кропом 16:9→4:3",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4",
+          "voice": "https://inputs.test/postprod/voice.mp3",
+          "bg1": "https://inputs.test/postprod/bg1.wav"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -i {{bg1}} -filter_complex \"[0:v]crop='floor(min(iw,ih*1.333333)/2)*2':'floor(min(ih,iw/1.333333)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1[v];[2:a]atrim=0:6,apad=whole_dur=6,volume=1[bgraw];[1:a]adelay=1200:all=1[vo];[vo]asplit=2[vo1][vosc];[bgraw]aformat=channel_layouts=stereo[bgfmt];[vosc]aformat=channel_layouts=stereo[voscfmt];[bgfmt][voscfmt]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=150[bg];[bg][vo1]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11[a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "postprod/silent-source-voice-minimal-subs",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:start",
+      "note": "немой исходник (Grok): голос без [0:a]; тема minimal (BackColour с альфой)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4",
+          "voice": "https://inputs.test/postprod/voice.mp3",
+          "subs": "https://inputs.test/postprod/subs.srt"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -filter_complex \"[0:v]subtitles={{subs}}:force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=0,Shadow=0,Alignment=2,MarginV=50'[v];[1:a]adelay=250:all=1[vo];[vo]loudnorm=I=-16:TP=-1.5:LRA=11[a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "subs": "1\n00:00:00,200 --> 00:00:01,600\nПривіт! Ґанок, їжак, є ще й «лапки».\n\n2\n00:00:01,600 --> 00:00:03,000\nСъешь же ещё этих мягких булок: 100%\n\n3\n00:00:03,000 --> 00:00:04,200\nDon't panic — it's 10:30, O'Brien said \"hi\"\n\n4\n00:00:04,200 --> 00:00:05,500\nШрифт жирний  слеш; кома, крапка.\n"
+      }
+    },
+    {
+      "id": "postprod/metadata-only-copy",
+      "product": "postprod",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:start",
+      "note": "только метка ИИ: -c:v copy -c:a copy",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -map 0:v -map 0:a? -c:v copy -c:a copy -metadata \"comment=ai_generated=1;digital_source_type=trainedAlgorithmicMedia;ai_persona=1\" -metadata \"description=AI-generated video with a synthetic likeness or voice of a real person\" -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "actors/subtitle-burn",
+      "product": "actors",
+      "source": "backend/src/common/postprod.ts:planPostProduction",
+      "callSite": "backend/src/modules/actors/actors.service.ts:advanceSubtitleBurn",
+      "note": "прожиг SRT аватара (кириллица, UK, кавычки, двоеточия)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/actors/source.mp4",
+          "subs": "https://inputs.test/actors/subs.srt"
+        },
+        "output_files": [
+          "final.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -filter_complex \"[0:v]subtitles={{subs}}:force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60'[v]\" -map \"[v]\" -map 0:a? -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a copy -metadata \"comment=ai_generated=1;digital_source_type=trainedAlgorithmicMedia\" -metadata \"description=AI-generated video\" -movflags +faststart {{final.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "subs": "1\n00:00:00,200 --> 00:00:01,600\nПривіт! Ґанок, їжак, є ще й «лапки».\n\n2\n00:00:01,600 --> 00:00:03,000\nСъешь же ещё этих мягких булок: 100%\n\n3\n00:00:03,000 --> 00:00:04,200\nDon't panic — it's 10:30, O'Brien said \"hi\"\n\n4\n00:00:04,200 --> 00:00:05,500\nШрифт жирний  слеш; кома, крапка.\n"
+      }
+    },
+    {
+      "id": "postprod/autoexport-batch",
+      "product": "postprod",
+      "source": "backend/src/common/reframe.ts:planBatchReframe",
+      "callSite": "backend/src/modules/postprod/postprod.service.ts:startExport",
+      "note": "несколько независимых команд и outputs в одной задаче; дубль и родной формат отброшены генератором",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/postprod/source.mp4"
+        },
+        "output_files": [
+          "export-1x1.mp4",
+          "export-4x5.mp4",
+          "export-4x3.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -vf \"crop='floor(min(iw,ih*1.000000)/2)*2':'floor(min(ih,iw/1.000000)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a copy -movflags +faststart {{export-1x1.mp4}}",
+          "-i {{source}} -vf \"crop='floor(min(iw,ih*0.800000)/2)*2':'floor(min(ih,iw/0.800000)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a copy -movflags +faststart {{export-4x5.mp4}}",
+          "-i {{source}} -vf \"crop='floor(min(iw,ih*1.333333)/2)*2':'floor(min(ih,iw/1.333333)/2)*2':'(iw-out_w)/2':'(ih-out_h)/2',setsar=1\" -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a copy -movflags +faststart {{export-4x3.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "audio-track/voiceover-music-tempo",
+      "product": "audio-track",
+      "source": "backend/src/common/postprod.ts:planAudioTrackJob",
+      "callSite": "backend/src/modules/publishing/audio-track.service.ts:submitMix",
+      "note": "дорожка m4a: atempo, adelay, подложка, apad + -t, -vn",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/audio-track/source.mp4",
+          "voice": "https://inputs.test/audio-track/voice.mp3",
+          "music": "https://inputs.test/audio-track/music.mp3"
+        },
+        "output_files": [
+          "track.m4a"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -i {{music}} -filter_complex \"[2:a]atrim=0:8,apad=whole_dur=8,volume=0.12[mus];[0:a]volume=0.15[bg];[1:a]atempo=1.08,adelay=300:all=1[vo];[bg][vo][mus]amix=inputs=3:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=8[a]\" -map \"[a]\" -vn -c:a aac -b:a 192k -t 8 {{track.m4a}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "audio-track/dub-stem",
+      "product": "audio-track",
+      "source": "backend/src/common/postprod.ts:planAudioTrackJob",
+      "callSite": "backend/src/modules/publishing/audio-track.service.ts:submitMix",
+      "note": "дубляж со стемом: sidechaincompress",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/audio-track/source.mp4",
+          "voice": "https://inputs.test/audio-track/voice.mp3",
+          "bg1": "https://inputs.test/audio-track/bg1.mp3"
+        },
+        "output_files": [
+          "track.m4a"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -i {{bg1}} -filter_complex \"[2:a]atrim=0:7.5,apad=whole_dur=7.5,volume=1[bgraw];[1:a]anull[vo];[vo]asplit=2[vo1][vosc];[bgraw]aformat=channel_layouts=stereo[bgfmt];[vosc]aformat=channel_layouts=stereo[voscfmt];[bgfmt][voscfmt]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=150[bg];[bg][vo1]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=7.5[a]\" -map \"[a]\" -vn -c:a aac -b:a 192k -t 7.5 {{track.m4a}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "audio-track/silent-source",
+      "product": "audio-track",
+      "source": "backend/src/common/postprod.ts:planAudioTrackJob",
+      "callSite": "backend/src/modules/publishing/audio-track.service.ts:submitMix",
+      "note": "немой исходник: один голос, loudnorm без amix",
+      "live": true,
+      "request": {
+        "input_files": {
+          "source": "https://inputs.test/audio-track/source.mp4",
+          "voice": "https://inputs.test/audio-track/voice.mp3"
+        },
+        "output_files": [
+          "track.m4a"
+        ],
+        "ffmpeg_commands": [
+          "-i {{source}} -i {{voice}} -filter_complex \"[1:a]atempo=0.95[vo];[vo]loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=6[a]\" -map \"[a]\" -vn -c:a aac -b:a 192k -t 6 {{track.m4a}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "portfolio/watermark-default",
+      "product": "portfolio",
+      "source": "backend/src/common/watermark.ts:buildWatermarkPlan",
+      "callSite": "backend/src/modules/portfolio/portfolio-watermark.service.ts:submitJob",
+      "note": "знак по умолчанию (SITE_NAME)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "input": "https://inputs.test/portfolio/input.mp4"
+        },
+        "output_files": [
+          "watermarked.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{input}} -vf \"drawtext=text='viral4creators':fontsize=h/14:fontcolor=white@0.5:bordercolor=black@0.65:borderw=2:x=(w-tw)/2:y=h-th-h*0.06\" -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -c:a copy -movflags +faststart {{watermarked.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "portfolio/watermark-slight-cyrillic",
+      "product": "portfolio",
+      "source": "backend/src/common/watermark.ts:buildWatermarkPlan",
+      "callSite": "backend/src/modules/portfolio/portfolio-watermark.service.ts:submitJob",
+      "note": "кириллица и UK в drawtext (нужен шрифт с кириллицей)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "input": "https://inputs.test/portfolio/input.mp4"
+        },
+        "output_files": [
+          "watermarked.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{input}} -vf \"drawtext=text='Студія «Ґанок» — їжак':fontsize=h/22:fontcolor=white@0.32:bordercolor=black@0.47:borderw=2:x=w-tw-20:y=h-th-20\" -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -c:a copy -movflags +faststart {{watermarked.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "portfolio/watermark-strong-escapes",
+      "product": "portfolio",
+      "source": "backend/src/common/watermark.ts:buildWatermarkPlan",
+      "callSite": "backend/src/modules/portfolio/portfolio-watermark.service.ts:submitJob",
+      "note": "крайний случай экранирования drawtext: ' : % \\ \" внутри -vf \"…\"",
+      "live": true,
+      "request": {
+        "input_files": {
+          "input": "https://inputs.test/portfolio/input.mp4"
+        },
+        "output_files": [
+          "watermarked.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{input}} -vf \"drawtext=expansion=none:text=O\\\\\\\\\\\\'Brien\\\\\\\\\\\\:\\\\\\\\\\\\ 100\\\\\\\\\\\\%\\\\\\\\\\\\ \\\\\\\\\\\\\\\\\\\\\\\\\\\\ \\\\\\\\\\\\\\\"best\\\\\\\\\\\\\\\":fontsize=h/11:fontcolor=white@0.65:bordercolor=black@0.8:borderw=2:x=w*0.04:y=h*0.08,drawtext=expansion=none:text=O\\\\\\\\\\\\'Brien\\\\\\\\\\\\:\\\\\\\\\\\\ 100\\\\\\\\\\\\%\\\\\\\\\\\\ \\\\\\\\\\\\\\\\\\\\\\\\\\\\ \\\\\\\\\\\\\\\"best\\\\\\\\\\\\\\\":fontsize=h/11:fontcolor=white@0.65:bordercolor=black@0.8:borderw=2:x=(w-tw)/2:y=(h-th)/2,drawtext=expansion=none:text=O\\\\\\\\\\\\'Brien\\\\\\\\\\\\:\\\\\\\\\\\\ 100\\\\\\\\\\\\%\\\\\\\\\\\\ \\\\\\\\\\\\\\\\\\\\\\\\\\\\ \\\\\\\\\\\\\\\"best\\\\\\\\\\\\\\\":fontsize=h/11:fontcolor=white@0.65:bordercolor=black@0.8:borderw=2:x=w-tw-w*0.04:y=h-th-h*0.08\" -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -c:a copy -movflags +faststart {{watermarked.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "portfolio/watermark-shell-chars",
+      "product": "portfolio",
+      "source": "backend/src/common/watermark.ts:buildWatermarkPlan",
+      "callSite": "backend/src/modules/portfolio/portfolio-watermark.service.ts:submitJob",
+      "note": "$ и обратная кавычка (подстановка shell) и разделители графа в тексте знака — не 422, текст как есть",
+      "live": true,
+      "request": {
+        "input_files": {
+          "input": "https://inputs.test/portfolio/input.mp4"
+        },
+        "output_files": [
+          "watermarked.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-i {{input}} -vf \"drawtext=expansion=none:text=Cost\\\\\\\\\\\\ \\\\\\\\\\\\\\$5\\\\\\\\\\\\ \\\\\\\\\\\\\\`now\\\\\\\\\\\\\\`\\\\\\\\\\\\,\\\\\\\\\\\\ \\\\\\\\\\\\[a\\\\\\\\\\\\]\\\\\\\\\\\\;b\\\\\\\\\\\\ \\\\\\\\\\\\{x\\\\\\\\\\\\}:fontsize=h/14:fontcolor=white@0.5:bordercolor=black@0.65:borderw=2:x=(w-tw)/2:y=h-th-h*0.06\" -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -c:a copy -movflags +faststart {{watermarked.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "shared-video/poster",
+      "product": "shared-video",
+      "source": "backend/src/common/poster-frame.ts:planPosterFrame",
+      "callSite": "backend/src/modules/shared-video/shared-video-poster.service.ts:capture",
+      "note": "постер: -ss до -i, -frames:v 1, -q:v, JPEG",
+      "live": true,
+      "request": {
+        "input_files": {
+          "video": "https://inputs.test/shared-video/video.mp4"
+        },
+        "output_files": [
+          "poster.jpg"
+        ],
+        "ffmpeg_commands": [
+          "-ss 1 -i {{video}} -frames:v 1 -q:v 3 {{poster.jpg}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "client-site-tutorial/silent-uniform",
+      "product": "client-site-tutorial",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/client-site-tutorial/client-site-tutorial-admin.service.ts:submitAssembly",
+      "note": "немое слайд-шоу: -framerate -loop 1 -t -i, scale/pad/setsar, concat a=0",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/client-site-tutorial/frame0.png",
+          "frame1": "https://inputs.test/client-site-tutorial/frame1.png",
+          "frame2": "https://inputs.test/client-site-tutorial/frame2.png"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2 -i {{frame0}} -framerate 30 -loop 1 -t 2 -i {{frame1}} -framerate 30 -loop 1 -t 2 -i {{frame2}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[2:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v2];[v0][v1][v2]concat=n=3:v=1:a=0[outv]\" -map \"[outv]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "client-site-tutorial/voiced-fade-captions",
+      "product": "client-site-tutorial",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/client-site-tutorial/client-site-tutorial-admin.service.ts:submitVoicedAssembly",
+      "note": "xfade-переходы, реплики на кадр с anullsrc для немого кадра, atrim end_sample, ASS-подписи UK/RU через subtitles= в filter_complex",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/client-site-tutorial/frame0.png",
+          "frame1": "https://inputs.test/client-site-tutorial/frame1.png",
+          "frame3": "https://inputs.test/client-site-tutorial/frame3.png",
+          "voice0": "https://inputs.test/client-site-tutorial/voice0.mp3",
+          "voice3": "https://inputs.test/client-site-tutorial/voice3.mp3",
+          "captions": "https://inputs.test/client-site-tutorial/captions.ass"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2.7 -i {{frame0}} -framerate 30 -loop 1 -t 2 -i {{frame1}} -framerate 30 -loop 1 -t 3.1333 -i {{frame3}} -i {{voice0}} -i {{voice3}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[2:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v3];[3:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=end_sample=105840,asetpts=N/SR/TB[a0];anullsrc=channel_layout=stereo:sample_rate=44100,atrim=end_sample=74970[a1];[4:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=end_sample=138180,asetpts=N/SR/TB[a3];[v0][v1]xfade=transition=fade:duration=0.3:offset=2.4[xf1];[xf1][v3]xfade=transition=fade:duration=0.3:offset=4.1[outv];[a0][a1][a3]concat=n=3:v=0:a=1,apad=pad_len=1470[outa];[outv]subtitles={{captions}}[outc]\" -map \"[outc]\" -map \"[outa]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "captions": "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 2340\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: caption,Arial,44,&H00FFFFFF,&H000000FF,&H30000000,&H00000000,0,0,0,0,100,100,0,0,3,6,0,2,90,90,164,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.40,caption,,0,0,0,,Натисніть «Створити» — і ґудзик стане зеленим.\nDialogue: 0,0:00:04.09,0:00:07.23,caption,,0,0,0,,Нажмите: \"Готово\"; всё сохранится автоматически.\n"
+      }
+    },
+    {
+      "id": "tutorial-runner/zoom-pointer",
+      "product": "tutorial-runner",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly",
+      "note": "fade+zoom: perspective eval=frame, кольцо-указатель color+geq+overlay enable=…",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/tutorial-runner/frame0.png",
+          "frame1": "https://inputs.test/tutorial-runner/frame1.png",
+          "voice0": "https://inputs.test/tutorial-runner/voice0.mp3",
+          "voice1": "https://inputs.test/tutorial-runner/voice1.mp3"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2.5 -i {{frame0}} -framerate 30 -loop 1 -t 3 -i {{frame1}} -i {{voice0}} -i {{voice1}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease[sc0];color=c=black@0:s=96x96:r=30:d=2.5,format=rgba,geq=r=255:g=106:b=0:a=255*exp(-(sqrt((X-47.5)*(X-47.5)+(Y-47.5)*(Y-47.5))-36)*(sqrt((X-47.5)*(X-47.5)+(Y-47.5)*(Y-47.5))-36)/10)[pr0];[sc0][pr0]overlay=x=main_w*0.5-overlay_w/2+1:y=main_h*0.8-overlay_h/2+1:enable=1+sgn(t-1.4833),pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1,perspective=x0=W*((1-1/(1+0.04*in/74))/2):y0=H*((1-1/(1+0.04*in/74))/2):x1=W*(1-((1-1/(1+0.04*in/74))/2)):y1=H*((1-1/(1+0.04*in/74))/2):x2=W*((1-1/(1+0.04*in/74))/2):y2=H*(1-((1-1/(1+0.04*in/74))/2)):x3=W*(1-((1-1/(1+0.04*in/74))/2)):y3=H*(1-((1-1/(1+0.04*in/74))/2)):interpolation=cubic:eval=frame[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1,perspective=x0=W*((1-1/(1+0.04*in/89))/2):y0=H*((1-1/(1+0.04*in/89))/2):x1=W*(1-((1-1/(1+0.04*in/89))/2)):y1=H*((1-1/(1+0.04*in/89))/2):x2=W*((1-1/(1+0.04*in/89))/2):y2=H*(1-((1-1/(1+0.04*in/89))/2)):x3=W*(1-((1-1/(1+0.04*in/89))/2)):y3=H*(1-((1-1/(1+0.04*in/89))/2)):interpolation=cubic:eval=frame[v1];[2:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=end_sample=97020,asetpts=N/SR/TB[a0];[3:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=end_sample=132300,asetpts=N/SR/TB[a1];[v0][v1]xfade=transition=fade:duration=0.3:offset=2.2[outv];[a0][a1]concat=n=2:v=0:a=1,apad=pad_len=1470[outa]\" -map \"[outv]\" -map \"[outa]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "tutorial-runner/single-voiceover",
+      "product": "tutorial-runner",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly",
+      "note": "общая дорожка: apad + atrim end_sample, -shortest",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/tutorial-runner/frame0.png",
+          "frame1": "https://inputs.test/tutorial-runner/frame1.png",
+          "voiceover": "https://inputs.test/tutorial-runner/voiceover.mp3"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2.4 -i {{frame0}} -framerate 30 -loop 1 -t 2.4 -i {{frame1}} -i {{voiceover}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[v0][v1]concat=n=2:v=1:a=0[outv];[2:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=end_sample=213150,asetpts=N/SR/TB[outa]\" -map \"[outv]\" -map \"[outa]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "tutorial-video-versions/preamble-captions",
+      "product": "tutorial-video-versions",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/postprod/tutorial-video-versions.service.ts:submitVersion",
+      "note": "преамбула mp4: tpad stop_mode=clone, trim, settb=AVTB, fps, concat n=2 с телом",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/tutorial-video-versions/frame0.png",
+          "frame1": "https://inputs.test/tutorial-video-versions/frame1.png",
+          "voice0": "https://inputs.test/tutorial-video-versions/voice0.mp3",
+          "voice1": "https://inputs.test/tutorial-video-versions/voice1.mp3",
+          "captions": "https://inputs.test/tutorial-video-versions/captions.ass",
+          "preamble": "https://inputs.test/tutorial-video-versions/preamble.mp4"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 3 -i {{frame0}} -framerate 30 -loop 1 -t 2.5 -i {{frame1}} -i {{voice0}} -i {{voice1}} -i {{preamble}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[2:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:3,asetpts=N/SR/TB[a0];[3:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:2.5,asetpts=N/SR/TB[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][acat];[acat]apad=pad_len=1470[outa];[outv]subtitles={{captions}}[outc];[outc]fps=30,settb=AVTB,setpts=PTS-STARTPTS[bodyv];[4:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=6.4,trim=duration=6.4,settb=AVTB,setpts=PTS-STARTPTS[introv];[4:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=6.4,asetpts=N/SR/TB[introa];[outa]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[bodya];[introv][introa][bodyv][bodya]concat=n=2:v=1:a=1[finalv][finala]\" -map \"[finalv]\" -map \"[finala]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "captions": "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 2340\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: caption,Arial,44,&H00FFFFFF,&H000000FF,&H30000000,&H00000000,0,0,0,0,100,100,0,0,3,6,0,2,90,90,164,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:03.00,caption,,0,0,0,,Вітаємо! Це — ваш перший крок.\nDialogue: 0,0:00:03.00,0:00:05.50,caption,,0,0,0,,Готово: їдемо далі.\n"
+      }
+    },
+    {
+      "id": "client-site-tutorial/silent-preamble",
+      "product": "client-site-tutorial",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/client-site-tutorial/client-site-tutorial-admin.service.ts:submitAssembly",
+      "note": "немое тело + преамбула: anullsrc=r=…:cl=… с atrim=duration (бесконечный источник ограничен)",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/client-site-tutorial/frame0.png",
+          "frame1": "https://inputs.test/client-site-tutorial/frame1.png",
+          "preamble": "https://inputs.test/client-site-tutorial/preamble.mp4"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2 -i {{frame0}} -framerate 30 -loop 1 -t 2 -i {{frame1}} -i {{preamble}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[v0][v1]concat=n=2:v=1:a=0[outv];[outv]fps=30,settb=AVTB,setpts=PTS-STARTPTS[bodyv];[2:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=6.4,trim=duration=6.4,settb=AVTB,setpts=PTS-STARTPTS[introv];[2:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=6.4,asetpts=N/SR/TB[introa];anullsrc=r=44100:cl=stereo,atrim=duration=4,asetpts=N/SR/TB[bodya];[introv][introa][bodyv][bodya]concat=n=2:v=1:a=1[finalv][finala]\" -map \"[finalv]\" -map \"[finala]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "tutorial-runner/voiced-silent-frame",
+      "product": "tutorial-runner",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly",
+      "note": "без переходов: тишина немого кадра — anullsrc=…:d=…, пары [v][a] в concat",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame0": "https://inputs.test/tutorial-runner/frame0.png",
+          "frame2": "https://inputs.test/tutorial-runner/frame2.png",
+          "voice0": "https://inputs.test/tutorial-runner/voice0.mp3"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2.6 -i {{frame0}} -framerate 30 -loop 1 -t 2 -i {{frame2}} -i {{voice0}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v2];[2:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:2.6,asetpts=N/SR/TB[a0];anullsrc=channel_layout=stereo:sample_rate=44100:d=2[a2];[v0][a0][v2][a2]concat=n=2:v=1:a=1[outv][acat];[acat]apad=pad_len=1470[outa]\" -map \"[outv]\" -map \"[outa]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "story/legacy-intro-main",
+      "product": "story",
+      "source": "backend/src/modules/story-gifts/story-video-plan.ts:planStorySegments",
+      "callSite": "backend/src/modules/story-gifts/story-video.service.ts:create",
+      "note": "прежняя раскладка: ведущий `ffmpeg`, -loop 1 -framerate 25, setpts-фактор, concat",
+      "live": true,
+      "request": {
+        "input_files": {
+          "base": "https://inputs.test/story-render-input/TOKEN/base",
+          "main": "https://inputs.test/story-render-input/TOKEN/main",
+          "cover": "https://inputs.test/story-render-input/TOKEN/cover",
+          "intro": "https://inputs.test/story-render-input/TOKEN/intro"
+        },
+        "output_files": [
+          "story.mp4"
+        ],
+        "ffmpeg_commands": [
+          "ffmpeg -i {{base}} -i {{main}} -loop 1 -framerate 25 -i {{cover}} -i {{intro}} -filter_complex \"[2:v]scale=1280:720,setsar=1,fps=25,trim=duration=7.250000,setpts=PTS-STARTPTS[iv];[3:a]aresample=48000,apad,atrim=duration=7.250000,asetpts=PTS-STARTPTS[ia];[0:v]setpts=0.98080000*(PTS-STARTPTS),fps=25,trim=duration=61.300000,scale=1280:720,setsar=1[v];[1:a]aresample=48000,apad,atrim=duration=61.300000,asetpts=PTS-STARTPTS[a];[iv][ia][v][a]concat=n=2:v=1:a=1[outv][outa]\" -map \"[outv]\" -map \"[outa]\" -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -ar 48000 -movflags +faststart -t 68.550000 {{story.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "story/segments-recorded-narrator-note-outro",
+      "product": "story",
+      "source": "backend/src/modules/story-gifts/story-video-plan.ts:planStorySegments",
+      "callSite": "backend/src/modules/story-gifts/story-video.service.ts:create",
+      "note": "сегменты: своя запись с loudnorm, кадр рассказчика, записка с фото, концовка; mono 48 кГц",
+      "live": true,
+      "request": {
+        "input_files": {
+          "base": "https://inputs.test/story-render-input/TOKEN/base",
+          "main": "https://inputs.test/story-render-input/TOKEN/main",
+          "intro": "https://inputs.test/story-render-input/TOKEN/intro",
+          "narrator": "https://inputs.test/story-render-input/TOKEN/narrator",
+          "note_visual": "https://inputs.test/story-render-input/TOKEN/photo",
+          "note": "https://inputs.test/story-render-input/TOKEN/note",
+          "outro_visual": "https://inputs.test/story-render-input/TOKEN/cover",
+          "outro": "https://inputs.test/story-render-input/TOKEN/outro"
+        },
+        "output_files": [
+          "story.mp4"
+        ],
+        "ffmpeg_commands": [
+          "ffmpeg -i {{base}} -i {{main}} -loop 1 -framerate 25 -i {{narrator}} -i {{intro}} -loop 1 -framerate 25 -i {{note_visual}} -i {{note}} -loop 1 -framerate 25 -i {{outro_visual}} -i {{outro}} -filter_complex \"[2:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x102b35,setsar=1,fps=25,trim=duration=9.500000,setpts=PTS-STARTPTS[iv];[3:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=9.500000,asetpts=PTS-STARTPTS[ia];[4:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x102b35,setsar=1,fps=25,trim=duration=6.000000,setpts=PTS-STARTPTS[gv];[5:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=6.000000,asetpts=PTS-STARTPTS[ga];[0:v]setpts=1.20000000*(PTS-STARTPTS),fps=25,trim=duration=75.000000,scale=1280:720,setsar=1[v];[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=75.000000,asetpts=PTS-STARTPTS[a];[6:v]scale=1280:720,setsar=1,fps=25,trim=duration=4.200000,setpts=PTS-STARTPTS[ov];[7:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=4.200000,asetpts=PTS-STARTPTS[oa];[iv][ia][gv][ga][v][a][ov][oa]concat=n=4:v=1:a=1[outv][outa]\" -map \"[outv]\" -map \"[outa]\" -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -ar 48000 -movflags +faststart -t 94.700000 {{story.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "story/stems-music-ducking-effects",
+      "product": "story",
+      "source": "backend/src/modules/story-gifts/story-video-plan.ts:planStorySegments",
+      "callSite": "backend/src/modules/story-gifts/story-video.service.ts:create",
+      "note": "будущие стемы (STORY_VIDEO_MIX): -stream_loop -1 музыки, asplit + sidechaincompress, amix normalize=0",
+      "live": false,
+      "request": {
+        "input_files": {
+          "base": "https://inputs.test/story-render-input/TOKEN/base",
+          "main": "https://inputs.test/story-render-input/TOKEN/main",
+          "cover": "https://inputs.test/story-render-input/TOKEN/cover",
+          "intro": "https://inputs.test/story-render-input/TOKEN/intro",
+          "note_visual": "https://inputs.test/story-render-input/TOKEN/photo",
+          "note": "https://inputs.test/story-render-input/TOKEN/note",
+          "music": "https://inputs.test/story-render-input/TOKEN/music",
+          "effects": "https://inputs.test/story-render-input/TOKEN/effects"
+        },
+        "output_files": [
+          "story.mp4"
+        ],
+        "ffmpeg_commands": [
+          "ffmpeg -i {{base}} -i {{main}} -loop 1 -framerate 25 -i {{cover}} -i {{intro}} -loop 1 -framerate 25 -i {{note_visual}} -i {{note}} -stream_loop -1 -i {{music}} -i {{effects}} -filter_complex \"[2:v]scale=1280:720,setsar=1,fps=25,trim=duration=8.000000,setpts=PTS-STARTPTS[iv];[3:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=8.000000,asetpts=PTS-STARTPTS[ia];[0:v]setpts=1.28000000*(PTS-STARTPTS),fps=25,trim=duration=80.000000,scale=1280:720,setsar=1[v];[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=80.000000,asetpts=PTS-STARTPTS[a];[4:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x102b35,setsar=1,fps=25,trim=duration=12.000000,setpts=PTS-STARTPTS[gv];[5:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=duration=12.000000,asetpts=PTS-STARTPTS[ga];[iv][ia][v][a][gv][ga]concat=n=3:v=1:a=1[outv][speech];[speech]asplit=2[sp][sc];[6:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,volume=0.250,atrim=duration=100.000000,asetpts=PTS-STARTPTS[mus];[mus][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400[musd];[7:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,volume=0.500,apad,atrim=duration=100.000000,asetpts=PTS-STARTPTS[sfx];[sp][musd][sfx]amix=inputs=3:duration=first:dropout_transition=0:normalize=0[outa]\" -map \"[outv]\" -map \"[outa]\" -c:v libx264 -preset veryfast -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -ar 48000 -movflags +faststart -t 100.000000 {{story.mp4}}"
+        ]
+      },
+      "textInputs": {}
+    },
+    {
+      "id": "tutorial-quality/frame-signals",
+      "product": "tutorial-quality",
+      "source": "backend/src/modules/tutorial-quality/demo-quality-frames.ts:frameSignalsJob",
+      "callSite": "backend/src/modules/tutorial-quality/demo-quality.service.ts:submitSignals",
+      "note": "выход пишет ФИЛЬТР (metadata=print:file={{signals.txt}}), сам ffmpeg — в -f null -",
+      "live": true,
+      "request": {
+        "input_files": {
+          "video": "https://inputs.test/tutorial-quality/video.mp4"
+        },
+        "output_files": [
+          "signals.txt"
+        ],
+        "ffmpeg_commands": [
+          "-i {{video}} -vf \"blackdetect=d=0.5:pix_th=0.10,freezedetect=n=0.001:d=1,metadata=mode=print:file={{signals.txt}}\" -an -f null -"
+        ]
+      },
+      "textInputs": {}
+    }
+  ]
+}

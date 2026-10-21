@@ -53,7 +53,12 @@ export type AttentionKind =
   | 'demo-stale'
   | 'demo-quality-fail'
   | 'demo-quality-warn'
-  | 'demo-quality-error';
+  | 'demo-quality-error'
+  | 'ffmpeg-unavailable'
+  | 'ffmpeg-not-ready'
+  | 'ffmpeg-breaker-open'
+  | 'ffmpeg-queue-stuck'
+  | 'ffmpeg-oom-repeated';
 
 export interface AttentionItem {
   /** Стабильный ключ «тип:объект» — дедупликация и React key. */
@@ -80,7 +85,8 @@ export type AttentionSourceKey =
   | 'moderation'
   | 'client-drafts'
   | 'assembly'
-  | 'quality';
+  | 'quality'
+  | 'ffmpeg';
 
 export type AttentionSourceStatus = 'ok' | 'error' | 'not_configured';
 
@@ -120,6 +126,7 @@ export const SOURCE_LABELS: Record<AttentionSourceKey, string> = {
   'client-drafts': 'Обучалки по сайтам',
   assembly: 'Сборки роликов',
   quality: 'Проверка качества демо',
+  ffmpeg: 'Свой FFmpeg-сервер',
 };
 
 /** Потолок карточек в ответе — страховка: карточки агрегированы. */
@@ -1101,5 +1108,155 @@ export function qualityItems(
       ),
     );
   }
+  return out;
+}
+
+// ── Свой FFmpeg-сервер (ТЗ FFmpeg-server v1.1 §12, §13.1) ──────────────
+
+/** Задача в очереди дольше этого — очередь без прогресса (срок очереди ТЗ §9). */
+export const FFMPEG_QUEUE_STUCK_SEC = 20 * 60;
+/** Столько OOM за сутки — уже не случайность. */
+export const FFMPEG_OOM_REPEATED = 2;
+
+/** То, что видно из `GET /api/admin/ffmpeg/overview`. */
+export interface FfmpegAttentionInput {
+  state: 'ok' | 'stale' | 'error' | 'not-configured';
+  fetchedAt: string | null;
+  error: string | null;
+  /** Очищенная сводка ffmpeg-server; поля читаются терпимо к написанию. */
+  data: Record<string, unknown> | null;
+  breaker: { open: boolean; openUntil: string | null; failures: number };
+}
+
+function pick(obj: unknown, ...path: string[][]): unknown {
+  for (const keys of path) {
+    let cur: unknown = obj;
+    for (const k of keys) {
+      cur =
+        cur && typeof cur === 'object'
+          ? (cur as Record<string, unknown>)[k]
+          : undefined;
+    }
+    if (cur !== undefined && cur !== null) return cur;
+  }
+  return undefined;
+}
+
+export function ffmpegItems(
+  input: FfmpegAttentionInput,
+  now: Date,
+): AttentionItem[] {
+  if (input.state === 'not-configured') return [];
+  const out: AttentionItem[] = [];
+  const seen = toDate(input.fetchedAt) ?? now;
+  if (input.state !== 'ok')
+    out.push(
+      makeItem(
+        {
+          id: 'ffmpeg-unavailable:server',
+          severity: 'blocker',
+          kind: 'ffmpeg-unavailable',
+          title: 'Свой FFmpeg-сервер не отвечает',
+          reason: `${scrubText(input.error, 160) ?? 'Сводка недоступна'}. ${
+            input.state === 'stale'
+              ? 'На вкладке — последние данные с отметкой времени.'
+              : 'Данных нет — это не пустая очередь.'
+          }`,
+          owner: 'operator',
+          href: '/ffmpeg',
+        },
+        seen,
+        now,
+      ),
+    );
+  const d = input.data;
+  // Форма ffmpeg-server (README, `GET /api/ops/overview`):
+  // `ready = {ready, checks, reasons[], checked_at}`.
+  const ready = pick(d, ['ready']);
+  const readyOk =
+    typeof ready === 'boolean'
+      ? ready
+      : (pick(ready, ['ready']) as boolean | undefined);
+  const reasons = pick(ready, ['reasons']);
+  if (d && readyOk === false)
+    out.push(
+      makeItem(
+        {
+          id: 'ffmpeg-not-ready:server',
+          severity: 'blocker',
+          kind: 'ffmpeg-not-ready',
+          title: 'FFmpeg-сервер не готов (ready=false)',
+          reason: `${
+            scrubText(
+              Array.isArray(reasons) ? reasons.map(String).join(', ') : '',
+              160,
+            ) ?? 'Причина не указана'
+          }. Новые задачи уходят к внешнему провайдеру, если fallback включён.`,
+          owner: 'operator',
+          href: '/ffmpeg',
+        },
+        seen,
+        now,
+      ),
+    );
+  if (input.breaker.open)
+    out.push(
+      makeItem(
+        {
+          id: 'ffmpeg-breaker-open:server',
+          severity: 'blocker',
+          kind: 'ffmpeg-breaker-open',
+          title: 'Breaker своего FFmpeg открыт',
+          reason: `Отказов подряд: ${input.breaker.failures}. Новые задачи идут к внешнему провайдеру${
+            input.breaker.openUntil
+              ? ` до ${formatDateTime(new Date(input.breaker.openUntil))}`
+              : ''
+          }, затем пробная — снова к своему серверу.`,
+          owner: 'operator',
+          href: '/ffmpeg',
+        },
+        now,
+        now,
+      ),
+    );
+  const oldest = Number(pick(d, ['queue', 'oldest_queued_age_sec']));
+  if (Number.isFinite(oldest) && oldest > FFMPEG_QUEUE_STUCK_SEC)
+    out.push(
+      makeItem(
+        {
+          id: 'ffmpeg-queue-stuck:server',
+          severity: 'decision',
+          kind: 'ffmpeg-queue-stuck',
+          title: 'Очередь FFmpeg без прогресса',
+          reason: `Старейшая задача ждёт ${Math.round(oldest / 60)} мин (срок очереди — ${
+            FFMPEG_QUEUE_STUCK_SEC / 60
+          } мин). Проверьте режим worker и readiness.`,
+          owner: 'operator',
+          href: `/ffmpeg${query({ state: 'queued' })}`,
+        },
+        new Date(seen.getTime() - oldest * 1000),
+        now,
+      ),
+    );
+  const ooms = Number(
+    pick(d, ['queue', 'errors_24h', 'OOM'], ['queue', 'oom_24h']),
+  );
+  if (Number.isFinite(ooms) && ooms >= FFMPEG_OOM_REPEATED)
+    out.push(
+      makeItem(
+        {
+          id: 'ffmpeg-oom-repeated:server',
+          severity: 'decision',
+          kind: 'ffmpeg-oom-repeated',
+          title: 'Повторные OOM у своего FFmpeg',
+          reason: `За сутки задач с OOM: ${ooms}. Повторять их автоматически нельзя — нужен профиль лимитов или вынос нагрузки.`,
+          owner: 'owner',
+          href: `/ffmpeg${query({ state: 'failed', period: '24h' })}`,
+          count: ooms,
+        },
+        seen,
+        now,
+      ),
+    );
   return out;
 }

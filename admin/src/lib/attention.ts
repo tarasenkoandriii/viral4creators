@@ -107,6 +107,13 @@ const ACTION_LABEL: Record<string, string> = {
   'demo-quality-fail': 'Открыть отчёт',
   'demo-quality-warn': 'Открыть отчёт',
   'demo-quality-error': 'Открыть ролики',
+  // Свой FFmpeg-сервер (admin-attention `ffmpegItems`): ссылка — на вкладку
+  // /ffmpeg с фильтром (состояние/период) из карточки.
+  'ffmpeg-unavailable': 'Открыть FFmpeg',
+  'ffmpeg-not-ready': 'Открыть FFmpeg',
+  'ffmpeg-breaker-open': 'Открыть FFmpeg',
+  'ffmpeg-queue-stuck': 'Открыть FFmpeg',
+  'ffmpeg-oom-repeated': 'Открыть FFmpeg',
 };
 
 export function actionLabel(kind: string): string {

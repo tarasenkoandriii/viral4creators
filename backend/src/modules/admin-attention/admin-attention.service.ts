@@ -22,7 +22,8 @@
  * `not_configured` — но уже записанные вердикты показываются и тогда:
  * это факты о роликах, а не о флаге.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { FfmpegAdminService } from '../ffmpeg-admin/ffmpeg-admin.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { readDemoQualityConfig } from '../tutorial-quality/demo-quality-queue';
@@ -64,6 +65,7 @@ import {
   SnapshotChangedGroup,
   snapshotErrorItems,
   SOURCE_LABELS,
+  ffmpegItems,
   TempoPendingRow,
   tempoApprovalItems,
   tutorialReviewItems,
@@ -89,6 +91,7 @@ export class AdminAttentionService {
     private readonly adminCron: AdminCronService,
     private readonly demoStatus: DemoStatusService,
     private readonly settings: PlatformSettingsService,
+    @Optional() private readonly ffmpeg?: FfmpegAdminService,
   ) {}
 
   async get(now: Date = new Date()): Promise<AttentionView> {
@@ -102,6 +105,7 @@ export class AdminAttentionService {
       ['client-drafts', (n) => this.clientDraftsSource(n)],
       ['assembly', (n) => this.assemblySource(n)],
       ['quality', (n) => this.qualitySource(n)],
+      ['ffmpeg', (n) => this.ffmpegSource(n)],
     ];
     const results = await Promise.all(
       collectors.map(async ([key, collect]) => {
@@ -115,12 +119,17 @@ export class AdminAttentionService {
       }),
     );
     const qualityOn = readDemoQualityConfig().enabled;
+    const ffmpegOn = !!this.ffmpeg?.opsConfigured();
     const sources: AttentionSource[] = results.map(({ key, error }) =>
       error === null
         ? {
             key,
             label: SOURCE_LABELS[key],
-            status: key === 'quality' && !qualityOn ? 'not_configured' : 'ok',
+            status:
+              (key === 'quality' && !qualityOn) ||
+              (key === 'ffmpeg' && !ffmpegOn)
+                ? 'not_configured'
+                : 'ok',
           }
         : {
             key,
@@ -132,6 +141,25 @@ export class AdminAttentionService {
     return buildView(
       results.flatMap((r) => r.items),
       sources,
+      now,
+    );
+  }
+
+  /** Свой FFmpeg-сервер: то, что видно из сводки вкладки «FFmpeg». */
+  private async ffmpegSource(now: Date): Promise<AttentionItem[]> {
+    if (!this.ffmpeg?.opsConfigured()) return [];
+    const o = await this.ffmpeg.overview();
+    return ffmpegItems(
+      {
+        state: o.selfhosted.state,
+        fetchedAt: o.selfhosted.fetchedAt,
+        error: o.selfhosted.error,
+        data:
+          o.selfhosted.data && typeof o.selfhosted.data === 'object'
+            ? (o.selfhosted.data as Record<string, unknown>)
+            : null,
+        breaker: o.routing.breaker,
+      },
       now,
     );
   }

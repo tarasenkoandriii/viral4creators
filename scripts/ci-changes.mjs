@@ -98,6 +98,8 @@ export const FILTERS = {
     // Спеки guide-assist импортируют их (сверка контракта коннектора).
     'sites-backend/src/modules/assist-admin-mode/identity-jwt.ts',
     'sites-backend/src/modules/assist-admin-mode/openapi-import.ts',
+    // Спека корпуса команд FFmpeg (src/common/ffmpeg-corpus.spec.ts) читает фикстуру.
+    'ffmpeg-server/test/fixtures/command-corpus.json',
   ],
   sites_backend: [
     'sites-backend/',
@@ -197,6 +199,15 @@ export const FILTERS = {
     'scripts/sync-relay-shared.mjs',
     // Тест защит скрипта правил хоста (live-login-relay/test/egress-script.spec.ts).
     'doc/relay-egress-docker-user.sh',
+  ],
+  // Собственный FFmpeg API (docs-tz/FFmpeg-server-spec-v1.1-RU.md): свои
+  // исходники и настоящие backend-клиенты (FfmpegApiService и ops-клиент
+  // вкладки «FFmpeg»), которые тесты гоняют против сервера
+  // (test/core/backend-client.ts читает их как есть).
+  ffmpeg_server: [
+    'ffmpeg-server/',
+    'backend/src/modules/postprod/ffmpeg-api.service.ts',
+    'backend/src/modules/ffmpeg-admin/ffmpeg-ops.client.ts',
   ],
   // Браузерный воркер (Э-С Ш3): свои исходники и источники копий
   // (scripts/sync-worker-shared.mjs) — фильтр трафика и подпись из backend,
@@ -354,6 +365,11 @@ function selfTest() {
   eq('фильтр исходящего трафика — бэк, реле и воркер (в sites-backend не копируется)', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'frontend', 'live_login_relay', 'browser_worker']);
   eq('SSRF-защита — бэк, копии sites-backend, реле и воркер', on(['backend/src/common/external-url-guard.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay', 'browser_worker']);
   eq('воркер Ш3 — только своя джоба', on(['browser-worker/src/runner.ts']), ['browser_worker']);
+  eq('ffmpeg-server — только своя джоба', on(['ffmpeg-server/src/main.ts', 'ffmpeg-server/Dockerfile']), ['ffmpeg_server']);
+  eq('backend-клиент FFmpeg — бэк, фронт и сквозной тест ffmpeg-server', on(['backend/src/modules/postprod/ffmpeg-api.service.ts']), ['backend', 'frontend', 'ffmpeg_server']);
+  eq('ops-клиент вкладки FFmpeg — бэк, фронт и ffmpeg-server', on(['backend/src/modules/ffmpeg-admin/ffmpeg-ops.client.ts']), ['backend', 'frontend', 'ffmpeg_server']);
+  eq('фикстура корпуса FFmpeg — и backend (спека корпуса), и ffmpeg-server', on(['ffmpeg-server/test/fixtures/command-corpus.json']), ['backend', 'ffmpeg_server']);
+  eq('прочий модуль postprod — без ffmpeg-server', on(['backend/src/modules/postprod/postprod.service.ts']), ['backend', 'frontend']);
   eq('протокол очереди воркера — бэк сайтов, assist и воркер', on(['sites-backend/src/modules/browser-jobs/protocol.ts']), ['sites_backend', 'assist', 'browser_worker']);
   eq('стоп-лист обучалки — бэк, копия sites-backend и воркер (P2-1)', on(['backend/src/modules/client-site-tutorial/danger-words.ts']), ['backend', 'sites_backend', 'frontend', 'browser_worker']);
   // P2-2: зависимости widget/scripts и стендов e2e в sites-backend.

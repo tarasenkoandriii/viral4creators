@@ -46,7 +46,10 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import {
   estimateCost,
@@ -1480,7 +1483,10 @@ export class TutorialDemoQualityService {
       },
     });
     if (claimed.count !== 1) return true;
-    const ref = await (this.ffmpeg as FfmpegApiService).submit(job);
+    const ref = await (this.ffmpeg as FfmpegApiService).submit({
+      ...job,
+      product: 'tutorial-quality',
+    });
     // Сначала — id задачи и пометка «расход не записан»: задача уже
     // оплачена, и терять её из-за сбоя журнала расходов нельзя (заход 7,
     // аудит). Расход пишется следом; не записался — повтор в следующем
@@ -1489,18 +1495,22 @@ export class TutorialDemoQualityService {
       where: { id: row.id, signalsStatus: 'running' },
       data: { signalsJobId: ref.jobId, signals: json({ usagePending: true }) },
     });
-    await this.recordSignalsUsage(row.id);
+    await this.recordSignalsUsage(row.id, ref.jobId);
     return true;
   }
 
   /** Расход задачи декодера — в тот же суточный бюджет проверки (операция
    *  та же). `false` — журнал недоступен, пометка остаётся. */
-  private async recordSignalsUsage(id: string): Promise<boolean> {
+  private async recordSignalsUsage(
+    id: string,
+    jobId: string | null,
+  ): Promise<boolean> {
     try {
       await this.aiUsage.record({
         operation: DEMO_QUALITY_OPERATION,
         model: 'ffmpeg-api',
         userId: null,
+        ...ffmpegUsageProvider(jobId),
       });
     } catch (err) {
       this.logger.warn(
@@ -1530,7 +1540,7 @@ export class TutorialDemoQualityService {
     }
     // Задача оплачена, а расход ещё не в журнале — сперва он.
     if ((row.signals as { usagePending?: boolean } | null)?.usagePending) {
-      if (!(await this.recordSignalsUsage(row.id))) return;
+      if (!(await this.recordSignalsUsage(row.id, row.signalsJobId))) return;
     }
     if (this.clock() - started > SIGNALS_DEADLINE_MS) {
       await this.failSignals(row, 'декодер не ответил за 10 мин');

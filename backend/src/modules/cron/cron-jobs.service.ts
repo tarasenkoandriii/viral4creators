@@ -1,5 +1,13 @@
 import { StoryVideoService } from '../story-gifts/story-video.service';
 import { StoryRetentionService } from '../story-gifts/story-retention.service';
+import {
+  FFMPEG_FALLBACK_RETENTION_DAYS,
+  FFMPEG_OPERATOR_RETENTION_DAYS,
+  FFMPEG_SUBMISSION_RETENTION_DAYS,
+  pruneFfmpegFallbackEvents,
+  pruneFfmpegOperatorActions,
+  pruneFfmpegSubmissions,
+} from '../ffmpeg-admin/ffmpeg-operator-journal';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 import { SessionService } from '../../common/session.service';
@@ -1073,6 +1081,36 @@ export class CronJobsService {
     } catch (error) {
       this.logger.warn(
         `память классификатора регистра не подчищена: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    // Журнал оператора вкладки «FFmpeg» (ТЗ FFmpeg-server v1.1 §13.1):
+    // 90 дней — `ffmpeg-operator-journal.ts`. Тем же суточным прогоном,
+    // best-effort, как соседи; таблица append-only, DELETE разрешён.
+    try {
+      const count = await pruneFfmpegOperatorActions(this.prisma);
+      if (count > 0) {
+        this.logger.log(
+          `журнал оператора FFmpeg: удалено ${count} записей старше ${FFMPEG_OPERATOR_RETENTION_DAYS} дней`,
+        );
+      }
+      const submissions = await pruneFfmpegSubmissions(this.prisma);
+      if (submissions > 0) {
+        this.logger.log(
+          `отправки FFmpeg: удалено ${submissions} записей старше ${FFMPEG_SUBMISSION_RETENTION_DAYS} дней`,
+        );
+      }
+      const fallbacks = await pruneFfmpegFallbackEvents(this.prisma);
+      if (fallbacks > 0) {
+        this.logger.log(
+          `события fallback FFmpeg: удалено ${fallbacks} старше ${FFMPEG_FALLBACK_RETENTION_DAYS} дней`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `журнал оператора FFmpeg не подчищен: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

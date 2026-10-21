@@ -131,7 +131,10 @@ import {
 } from './tutorial-budget';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { BlobService } from '../storage/blob.service';
-import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import {
+  FfmpegApiService,
+  ffmpegUsageProvider,
+} from '../postprod/ffmpeg-api.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -3717,6 +3720,9 @@ export class TutorialScenarioRunnerService {
         inputs: plan.inputs,
         outputs: plan.outputs,
         commands: plan.commands,
+        product: 'tutorial-runner',
+        // Строка актива заводится на каждую сборку: один ключ = одна попытка.
+        operationKey: `tutorial-asset:${asset.id}`,
       });
 
       // Сборка стоит денег, и до сквозного аудита A+B+C этот расход
@@ -3729,6 +3735,7 @@ export class TutorialScenarioRunnerService {
         operation: 'tutorial-video-assembly',
         model: 'ffmpeg-api',
         userId,
+        ...ffmpegUsageProvider(job.jobId),
       });
 
       // Тот же compare-and-set, что у `abandonAssembly` (сквозной
@@ -4335,10 +4342,13 @@ export class TutorialScenarioRunnerService {
     if (status.status === 'pending') return;
 
     if (status.status === 'failed') {
+      // Инфраструктурный провал своего FFmpeg-сервера (OOM, INTERNAL, …) —
+      // не вина содержимого: `infra` не тратит попытку, и следующая сборка
+      // уйдёт по маршрутизации (с открытым breaker — к hosted).
       await this.failAssembly(
         asset,
         status.error ?? 'ffmpeg-api вернул ошибку без текста',
-        'content',
+        status.retryOnFallback ? 'infra' : 'content',
       );
       return;
     }

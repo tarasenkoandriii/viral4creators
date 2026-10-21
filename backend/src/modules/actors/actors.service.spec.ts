@@ -582,6 +582,7 @@ describe('ActorsService.getAvatarVideoStatus', () => {
           },
           outputs: expect.any(Array),
           commands: expect.any(Array),
+          product: 'actors',
         });
         // Заход 8 C11: аватар снят ИИ — метка в той же задаче прожига.
         expect(ffmpeg.submit.mock.calls[0][0].commands[0]).toContain(

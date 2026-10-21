@@ -110,6 +110,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/testing', label: 'Тестирование' },
       { href: '/telemetry', label: 'Телеметрия' },
       { href: '/soniox', label: 'Soniox: голос и ошибки' },
+      // ТЗ FFmpeg-server v1.1 §13.1: операционная вкладка собственного
+      // FFmpeg-сервера — один пункт, именно в «Эксплуатации».
+      { href: '/ffmpeg', label: 'FFmpeg: обработка' },
       { href: '/settings', label: 'Настройки' },
     ],
   },
