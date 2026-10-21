@@ -56,6 +56,36 @@ export async function loadSiteQaReport(
     throw new Error('Реестр изменился. Повторите экспорт.');
   return { siteId, generatedAt: new Date().toISOString(), entries };
 }
+/** Recheck after PDF rendering/private downloads; artifact changes need not bump a finding revision. */
+export async function assertSiteQaReportCurrent(
+  api: ReportApi,
+  report: SiteQaReport
+) {
+  const signature = (value: SiteQaReport) =>
+    JSON.stringify(
+      value.entries
+        .map(({ finding, artifacts }) => [
+          finding.id,
+          finding.revision,
+          artifacts
+            .map((a) => [
+              a.id,
+              a.findingRevision,
+              a.sha256,
+              a.bytes,
+              a.contentType,
+              a.expiresAt,
+            ])
+            .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        ])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    );
+  const current = await loadSiteQaReport(api, report.siteId);
+  if (signature(current) !== signature(report))
+    throw new Error(
+      'Замечания или доказательства изменились. Повторите экспорт.'
+    );
+}
 export function siteQaReportText(report: SiteQaReport) {
   const counts = ['P0', 'P1', 'P2', 'P3']
     .map(

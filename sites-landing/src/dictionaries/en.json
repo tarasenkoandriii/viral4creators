@@ -26,7 +26,7 @@
     },
     "footer": {
       "label": "Site footer",
-      "about": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated auditing of every customer-site workflow is still in development.",
+      "about": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated checks across an agreed set of pages, states and roles are still in development.",
       "productHeading": "Assistant",
       "legalHeading": "Documents",
       "draftNote": "Legal pages are drafts pending legal review.",
@@ -146,7 +146,7 @@
   "home": {
     "hero": {
       "title": "Assistants for your website — by {brand}",
-      "lead": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated auditing of every customer-site workflow is still in development.",
+      "lead": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated checks across an agreed set of pages, states and roles are still in development.",
       "cta": "Join the assistant pilot"
     },
     "productsHeading": "Products",
@@ -178,10 +178,10 @@
       ],
       "limits": "The quick check uses 6 heuristics. It is not a full website, security or accessibility audit. It does not test form submission, business logic, speed, contrast, keyboard access, iframe/Shadow DOM or other pages. No signals does not mean no defects.",
       "privacy": "Q does not send the report to a server or include field values or the page path. Dashboard QA uses role-based access: viewers read, admins edit. PNG evidence is private, with links lasting up to 5 minutes and retention up to 30 days. Review comments for personal data before sharing Markdown.",
-      "roadmap": "Next: multi-page and state audits by URL, real mobile devices, a consolidated findings report/PDF, GitLab/JUnit and PR integrations. These are not advertised as available today.",
+      "roadmap": "Next: checks across an agreed set of pages, states and roles, real mobile devices, GitLab/JUnit and PR integrations. These are not advertised as available today.",
       "download": "Download Q · ZIP",
       "cabinet": "Open QA dashboard",
-      "report": "Run reports include a fresh revision, case versions, recorded and acceptance statuses, latest attempts and SHAs. Untested cases stay untested; a passing retry does not hide the earlier failure.",
+      "report": "Run reports include a fresh revision, case versions, recorded and acceptance statuses, latest attempts and SHAs. Untested cases stay untested; a passing retry does not hide the earlier failure. Consolidated findings already export to MD/PDF: up to 200 entries, with optional private PNG evidence. This reports recorded findings; it does not certify a whole-site audit.",
       "description": "Website QA: test catalog, plans, manual and CI checks, findings and reports. Quick local checks of an open page with Q; full site audits are in development."
     },
     "pilot": {

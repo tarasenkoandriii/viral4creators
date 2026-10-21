@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import {
+  assertSiteQaReportCurrent,
   loadSiteQaReport,
   siteQaReportText,
   type SiteQaReport,
@@ -170,4 +171,55 @@ await assert.rejects(
 );
 console.log(
   'Private PNG: authenticated bytes, hash, embedding, denied/mismatch abort passed'
+);
+
+await assertSiteQaReportCurrent(api, report);
+await assert.rejects(
+  assertSiteQaReportCurrent(
+    {
+      ...api,
+      list: async () => ({
+        items: [{ ...f, revision: 2 }],
+        nextBeforeId: null,
+      }),
+      get: async () => ({ ...f, revision: 2 }),
+    },
+    report
+  ),
+  'late changes must cancel export'
+);
+await assert.rejects(
+  assertSiteQaReportCurrent(
+    {
+      ...api,
+      artifacts: async () => [
+        {
+          id: 'late',
+          findingRevision: 1,
+          sha256: 'a'.repeat(64),
+          bytes: 1,
+          contentType: 'image/png' as const,
+          expiresAt: 'later',
+          createdAt: 'now',
+        },
+      ],
+    },
+    report
+  ),
+  'late changes must cancel export'
+);
+await assert.rejects(
+  assertSiteQaReportCurrent(
+    {
+      ...api,
+      artifacts: async () => {
+        throw new Error('access revoked');
+      },
+    },
+    report
+  ),
+  'revoked evidence access must cancel export'
+);
+console.log(
+  'Final export gate: late revision, artifact addition and revoked access rejected'
 );

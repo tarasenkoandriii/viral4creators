@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '../kit/ui';
 import { useAssist } from '../lib/assist-context';
-import { loadSiteQaReport, siteQaReportText } from '../lib/qa-site-report';
+import {
+  assertSiteQaReportCurrent,
+  loadSiteQaReport,
+  siteQaReportText,
+} from '../lib/qa-site-report';
 export function QaSiteReport({
   siteId,
   disabled,
@@ -13,7 +17,19 @@ export function QaSiteReport({
   const [busy, setBusy] = useState(false),
     [include, setInclude] = useState(false),
     [message, setMessage] = useState('');
+  const generation = useRef({ value: 0 });
+  useEffect(() => {
+    const counter = generation.current;
+    counter.value++;
+    setBusy(false);
+    setMessage('');
+    return () => {
+      counter.value++;
+    };
+  }, [siteId, disabled]);
   async function download(pdf: boolean) {
+    const request = ++generation.current.value;
+    const current = () => request === generation.current.value;
     setBusy(true);
     setMessage('');
     try {
@@ -39,6 +55,8 @@ export function QaSiteReport({
         blob = new Blob([siteQaReportText(report)], {
           type: 'text/markdown;charset=utf-8',
         });
+      await assertSiteQaReportCurrent(api, report);
+      if (!current()) return;
       const url = URL.createObjectURL(blob),
         a = document.createElement('a');
       a.href = url;
@@ -49,11 +67,12 @@ export function QaSiteReport({
         `Скачивание начато: ${report.entries.length} замечаний. Публичная ссылка не создавалась.`
       );
     } catch (e) {
+      if (!current()) return;
       setMessage(
         `Отчёт не выгружен. ${e instanceof Error ? e.message : 'Повторите попытку.'}`
       );
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
   return (
