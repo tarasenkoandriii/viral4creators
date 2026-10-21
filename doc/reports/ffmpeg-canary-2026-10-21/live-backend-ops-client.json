@@ -1,0 +1,21 @@
+{
+  "configured": {
+    "baseUrl": true,
+    "opsKey": true,
+    "clientKey": true
+  },
+  "overviewReadable": true,
+  "sanitized": true,
+  "fields": [
+    "generated_at",
+    "control",
+    "ready",
+    "queue",
+    "active",
+    "executor",
+    "capabilities",
+    "disk",
+    "limits_revision",
+    "image_digest"
+  ]
+}

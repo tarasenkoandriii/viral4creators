@@ -1053,6 +1053,9 @@ jobs:
       - name: тесты
         run: npx jest --ci --runInBand
         working-directory: ffmpeg-server
+      - name: off-host backup — повреждение, свежесть, квота, повторы
+        run: python3 -m unittest discover -s test/ops -p '*_test.py' -v
+        working-directory: ffmpeg-server
       - name: сборка
         run: npm run build
         working-directory: ffmpeg-server

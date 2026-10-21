@@ -311,3 +311,34 @@ read-only замер на 25 часов. После завершения тай�
 Наблюдения и credentials лежат в root-only `/opt/v4c-ffmpeg-canary`;
 скрипт сохраняет только статусы/сроки и число файлов, без подписанных URL.
 Полный протокол и оставшиеся условия: `doc/reports/ffmpeg-canary-2026-10-21`.
+
+### Резервная копия вне VPS: Mac владельца, пилот
+
+`scripts/pull-canary-backup.py` использует существующий SSH alias `relay`;
+новых ключей/доступов не создаёт. Раз в 15 минут LaunchAgent
+`org.viral4creators.ffmpeg-canary-backup` забирает последнюю завершённую
+online SQLite-копию из `/backup`, проверяет её integrity на VPS и SHA-256
+после передачи. Источник старше 30 минут отклоняется; медиа и ключи не
+копируются. Повтор той же копии не скачивает её заново, но сверяет хеш.
+Повреждённая локальная копия заменяется только после проверенной передачи.
+Имена файлов ограничены шаблоном, частичный файл не считается копией.
+
+Установка на этом Mac: программа в
+`~/Library/Application Support/viral4creators/bin/pull-ffmpeg-backup.py`,
+LaunchAgent в `~/Library/LaunchAgents/org.viral4creators.ffmpeg-canary-backup.plist`.
+Образец — `deploy/org.viral4creators.ffmpeg-canary-backup.plist.example`;
+его абсолютные пути нужно адаптировать на другой машине.
+Каталог копий и `status.json`:
+`~/Library/Application Support/viral4creators/ffmpeg-backups`.
+Права: каталог 0700, файлы 0600. Хранение 7 дней с сохранением последней
+имеющейся копии, общий бюджет 2 GiB, одна копия не больше 512 MiB.
+При превышении бюджета — отказ с `ok=false`, без удаления чужих файлов.
+
+Проверка: `launchctl print gui/$(id -u)/org.viral4creators.ffmpeg-canary-backup`
+и `status.json` (последний запуск и свежесть источника). Остановка:
+`launchctl bootout gui/$(id -u)/org.viral4creators.ffmpeg-canary-backup`.
+Mac должен быть включён и иметь доступ к VPS: **это не гарантия RPO 15 минут**.
+До production нужен постоянно доступный off-host приёмник и отдельное
+сохранение ключей восстановления. Значения ключей в Git/логи не включать.
+Восемь локальных тестов проверяют повреждение, хеш, свежесть, повторы,
+недопустимое имя, лимит размера и безопасную очистку; они включены в CI.
