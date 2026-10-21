@@ -1,0 +1,73 @@
+{
+  "caseId": "01-portrait",
+  "model": "gemini-2.5-flash",
+  "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+  "resultSha256": "874bfc1ea427b1197c635ff36a5d08781f23e9592965ad69d318b34cafbef1d2",
+  "usage": {
+    "promptTokenCount": 33349,
+    "candidatesTokenCount": 607,
+    "totalTokenCount": 33956,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 323
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 29456
+      },
+      {
+        "modality": "AUDIO",
+        "tokenCount": 3570
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "reservedUSD": 0.074309,
+  "recipeSha256": "15f40a0ac02e89f3441e3cbe436e66dd5561171d58bf6d3ede421d84fd81a532",
+  "review": {
+    "verdict": "revise",
+    "summary": "The video was cropped to a 4:5 aspect ratio, which resulted in significant loss of content from the top and bottom of the frame. The main title and logo are completely clipped, and the characters are cropped at the bottom. The subtitles are now overlapping the characters, making them difficult to read and affecting the overall composition.",
+    "findings": [
+      {
+        "category": "crop",
+        "severity": "high",
+        "startSeconds": 0,
+        "endSeconds": 55,
+        "observation": "The video has been cropped from a wider aspect ratio to 4:5, resulting in the top and bottom portions of the original video being cut off. This has led to the main title 'Репка' and the logo 'STORY-TALES' being completely clipped from the top of the frame. Additionally, the characters in the scene are cropped at their feet.",
+        "confidence": 5
+      },
+      {
+        "category": "titles",
+        "severity": "high",
+        "startSeconds": 0,
+        "endSeconds": 55,
+        "observation": "The main title 'Репка' and the logo 'STORY-TALES' are completely clipped due to the crop. The newly added subtitles are positioned at the bottom of the frame, overlapping with the characters' feet and the ground, which affects readability and composition.",
+        "confidence": 5
+      },
+      {
+        "category": "composition",
+        "severity": "high",
+        "startSeconds": 0,
+        "endSeconds": 55,
+        "observation": "The overall composition is negatively impacted by the crop. The main elements of the scene, including the characters and the turnip, are now positioned too low in the frame, and the top of the scene is empty. The overlapping subtitles further detract from the visual balance.",
+        "confidence": 5
+      }
+    ],
+    "suggestions": [
+      {
+        "parameter": "targetAspectRatio",
+        "value": "native",
+        "reason": "To restore the original composition and prevent clipping of the main title, logo, and characters, the video should be rendered in its native aspect ratio."
+      },
+      {
+        "parameter": "subtitleMarginV",
+        "value": "100",
+        "reason": "If a 4:5 aspect ratio is strictly required, increasing the vertical margin for subtitles would prevent them from overlapping the characters and improve readability."
+      }
+    ],
+    "limitations": [
+      "The original aspect ratio of the source video could not be precisely determined from the provided information, only that it was wider than 4:5."
+    ]
+  }
+}

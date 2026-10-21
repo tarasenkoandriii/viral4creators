@@ -1,0 +1,57 @@
+[
+  {
+    "caseId": "01-portrait",
+    "requiresHumanReview": true,
+    "candidates": [
+      {
+        "parameter": "targetAspectRatio",
+        "value": "native",
+        "reason": "To restore the original composition and prevent clipping of the main title, logo, and characters, the video should be rendered in its native aspect ratio."
+      }
+    ],
+    "rejected": [
+      {
+        "parameter": "subtitleMarginV",
+        "reason": "SRT controls are inactive for this recipe"
+      }
+    ]
+  },
+  {
+    "caseId": "02-native-titles",
+    "requiresHumanReview": true,
+    "candidates": [],
+    "rejected": [
+      {
+        "parameter": "subtitleAlignment",
+        "reason": "No change: the suggested value is already active"
+      },
+      {
+        "parameter": "subtitleMarginV",
+        "reason": "No change: the suggested value is already active"
+      },
+      {
+        "parameter": "subtitleFontSize",
+        "reason": "No change: the suggested value is already active"
+      }
+    ]
+  },
+  {
+    "caseId": "04-explicit-safe-area",
+    "requiresHumanReview": true,
+    "candidates": [],
+    "rejected": [
+      {
+        "parameter": "subtitleAlignment",
+        "reason": "SRT controls are inactive for this recipe"
+      },
+      {
+        "parameter": "subtitleMarginV",
+        "reason": "SRT controls are inactive for this recipe"
+      },
+      {
+        "parameter": "subtitleFontSize",
+        "reason": "SRT controls are inactive for this recipe"
+      }
+    ]
+  }
+]

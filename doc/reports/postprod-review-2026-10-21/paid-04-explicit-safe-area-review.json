@@ -1,0 +1,79 @@
+{
+  "caseId": "04-explicit-safe-area",
+  "model": "gemini-2.5-flash",
+  "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+  "resultSha256": "ca8613ed414a507e3c410d27956036a7c34ddd603e2e78be4b769165019750b3",
+  "usage": {
+    "promptTokenCount": 33822,
+    "candidatesTokenCount": 570,
+    "totalTokenCount": 34392,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 796
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 29456
+      },
+      {
+        "modality": "AUDIO",
+        "tokenCount": 3570
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "reservedUSD": 0.074782,
+  "recipeSha256": "a5d61f03d56d88089aff6f42bc95abac813c21a23a9a7726683c653cf57c3b45",
+  "review": {
+    "verdict": "revise",
+    "summary": "The rendered video introduces new titles that overlap with existing on-screen text and are not positioned optimally for readability against varying backgrounds. The original video's composition is altered by the new title placement.",
+    "findings": [
+      {
+        "category": "titles",
+        "severity": "high",
+        "startSeconds": 2,
+        "endSeconds": 8,
+        "observation": "The newly added title \"Репка: проверяем читаемость титров\" overlaps with the existing title \"Репка\" at the top left of the screen. This creates a cluttered and unreadable presentation.",
+        "confidence": 5
+      },
+      {
+        "category": "titles",
+        "severity": "medium",
+        "startSeconds": 10,
+        "endSeconds": 16,
+        "observation": "The newly added title \"Вместе легче справиться с задачей\" is placed in the upper middle of the screen, which is not ideal for readability as it is against a light background with clouds, making the light-colored text less distinct.",
+        "confidence": 4
+      },
+      {
+        "category": "composition",
+        "severity": "medium",
+        "startSeconds": 2,
+        "endSeconds": 8,
+        "observation": "The placement of the new title at the top left disrupts the original video's clean composition and obscures part of the existing title, which is a regression.",
+        "confidence": 4
+      }
+    ],
+    "suggestions": [
+      {
+        "parameter": "subtitleAlignment",
+        "value": "2",
+        "reason": "To ensure new titles do not overlap with existing on-screen elements and are placed in a more conventional and readable area, such as the bottom of the screen."
+      },
+      {
+        "parameter": "subtitleMarginV",
+        "value": "60",
+        "reason": "To provide adequate vertical spacing for the subtitles from the bottom edge, improving overall composition and readability."
+      },
+      {
+        "parameter": "subtitleFontSize",
+        "value": "24",
+        "reason": "To ensure the subtitles are appropriately sized for readability without being overly large or small, considering the target resolution."
+      }
+    ],
+    "limitations": [
+      "Could not assess audio quality as both source and result videos were deliberately silent.",
+      "Could not verify the accuracy of the Russian text in the subtitles, only its placement and readability."
+    ]
+  }
+}

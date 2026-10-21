@@ -1,0 +1,71 @@
+{
+  "caseId": "02-native-titles",
+  "model": "gemini-2.5-flash",
+  "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+  "resultSha256": "83aac60adee77dc9d7c4e5400ed02bf7c512376b1691fdb470ed9ec316a68126",
+  "usage": {
+    "promptTokenCount": 33380,
+    "candidatesTokenCount": 560,
+    "totalTokenCount": 33940,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 354
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 29456
+      },
+      {
+        "modality": "AUDIO",
+        "tokenCount": 3570
+      }
+    ],
+    "serviceTier": "standard"
+  },
+  "reservedUSD": 0.07434,
+  "recipeSha256": "058b95c256ff5108d5e6e4ea87332ee1e5d5c7536ab62a0f805c81eea0e9c5be",
+  "review": {
+    "verdict": "revise",
+    "summary": "The rendered video has a significant regression in subtitle placement and readability. The subtitles are no longer within the designated title safe area and overlap with the main content of the video, making them difficult to read and obscuring parts of the animation.",
+    "findings": [
+      {
+        "category": "titles",
+        "severity": "high",
+        "startSeconds": 2,
+        "endSeconds": 6,
+        "observation": "The newly added subtitle \"Репка: проверяем читаемость титров\" overlaps with the animated character (the farmer) and the turnip, making both the subtitle and parts of the animation difficult to see clearly. This is a regression from the source where the original title was placed in a dedicated lower third area.",
+        "confidence": 5
+      },
+      {
+        "category": "titles",
+        "severity": "high",
+        "startSeconds": 10,
+        "endSeconds": 14,
+        "observation": "The newly added subtitle \"Вместе легче справиться с задачей\" overlaps with the animated character (the farmer) and the turnip, making both the subtitle and parts of the animation difficult to see clearly. This is a regression from the source where the original title was placed in a dedicated lower third area.",
+        "confidence": 5
+      }
+    ],
+    "suggestions": [
+      {
+        "parameter": "subtitleAlignment",
+        "value": "2",
+        "reason": "To ensure subtitles are placed at the bottom of the screen, within a dedicated title-safe area, and do not overlap with the main visual content."
+      },
+      {
+        "parameter": "subtitleMarginV",
+        "value": "70",
+        "reason": "To provide adequate vertical spacing for the subtitles, preventing them from overlapping with the animated characters and the existing lower third graphic."
+      },
+      {
+        "parameter": "subtitleFontSize",
+        "value": "28",
+        "reason": "To maintain readability while ensuring the subtitles fit within the designated safe area without being excessively large or small."
+      }
+    ],
+    "limitations": [
+      "The review is based solely on visual comparison of the provided video files. No audio analysis was performed as both videos are deliberately silent.",
+      "The exact font name 'DejaVu Sans' was specified in the manifest, but its rendering quality or specific stylistic nuances beyond size and outline could not be quantitatively assessed from the visual output alone."
+    ]
+  }
+}

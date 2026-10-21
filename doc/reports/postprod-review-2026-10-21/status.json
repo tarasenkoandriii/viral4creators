@@ -1,5 +1,5 @@
 {
-  "status": "renders_verified_gemini_pending",
+  "status": "live_gemini_experiment_complete_product_integration_pending",
   "scope": "4 isolated executor-image runs on VPS, not product/API routing acceptance",
   "source": "existing Story-Tales silent animation; source unchanged; no Nova or accepted asset mutation",
   "renderer": "pinned canary executor image, network none, read-only root, 2 CPU/3 GiB, sequential",
@@ -11,7 +11,7 @@
   ],
   "implemented": "offline safe-title ASS+manifest compiler with source SHA-256 and ffprobe geometry guard; no automatic rendering or AI patch application",
   "gemini": {
-    "completedAnalyses": 0,
+    "completedAnalyses": 3,
     "attempts": [
       {
         "model": "gemini-2.5-flash",
@@ -26,15 +26,36 @@
         "status": 503
       }
     ],
-    "usageMetadataReceived": false,
+    "usageMetadataReceived": true,
     "billedAmountVerified": false,
-    "pending": "user offered paid profile; connected Chrome does not have that account; waiting for access",
-    "budgetApprovedUSD": 0.5
+    "pending": null,
+    "budgetApprovedUSD": 0.5,
+    "model": "gemini-2.5-flash",
+    "estimatedUSD": 0.0420048,
+    "paidAccountTier": "Tier 1; existing key, no new permissions or production env changes"
   },
   "open": [
-    "Gemini live review source+final+manifest",
     "approved structured patch -> one verification render from source, never chain re-encodes",
     "audio/voice/sync and multi-scene generated clips not tested by silent animation",
     "admin review UI and persisted CAS/idempotency/budget integration are not implemented by this offline utility"
-  ]
+  ],
+  "screening": {
+    "candidatesRequiringHumanReview": 1,
+    "rejectedSuggestions": 7,
+    "noOp": 3,
+    "inactiveRenderer": 4,
+    "automaticallyApplied": 0
+  },
+  "interpretation": "Model detected real regressions but also hallucinated crop axis and text overlap. No claim that the corrected render passed Gemini: it returned revise, with visual claims requiring human/geometry verification.",
+  "modelAudit": {
+    "verifiedResponseModelVersion": "gemini-2.5-flash",
+    "currentFlash": "gemini-3.8-flash",
+    "currentFlagship": "gemini-4-argon",
+    "sources": [
+      "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
+      "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon"
+    ],
+    "conclusion": "This experiment evaluates the older 2.5 Flash only, not the capability of current Gemini models. No paid-account comparison with 3.8 Flash or 4 Argon was performed. Earlier 3.8/3.6 503 occurred on a different, free-tier account.",
+    "callsAfterAudit": 0
+  }
 }

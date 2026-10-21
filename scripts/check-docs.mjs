@@ -2913,6 +2913,9 @@ function checkGuideSeams() {
   // `.ass`, пинуется целиком: четвёртый обязан прийти сюда и
   // прочитать, обо что споткнулись двое первых.
   const ASS_AUTHORS = [
+    // Pixel-based editorial titles: BorderStyle=1, black Outline=2;
+    // rendered on the real executor in the postprod review experiment.
+    "backend/src/common/postprod-titles.ts",
     "backend/src/common/greeting-cards.ts",
     "backend/src/modules/tutorial-runner/tutorial-captions.ts",
   ];

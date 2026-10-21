@@ -1,0 +1,42 @@
+{
+  "analyses": [
+    {
+      "caseId": "01-portrait",
+      "model": "gemini-2.5-flash",
+      "inputTokens": 33349,
+      "providerAudioTokensDespiteNoAudioStream": 3570,
+      "outputTokens": 607,
+      "estimatedUSD": 0.0140212,
+      "reservedUSD": 0.074309,
+      "verdict": "revise"
+    },
+    {
+      "caseId": "02-native-titles",
+      "model": "gemini-2.5-flash",
+      "inputTokens": 33380,
+      "providerAudioTokensDespiteNoAudioStream": 3570,
+      "outputTokens": 560,
+      "estimatedUSD": 0.013913,
+      "reservedUSD": 0.07434,
+      "verdict": "revise"
+    },
+    {
+      "caseId": "04-explicit-safe-area",
+      "model": "gemini-2.5-flash",
+      "inputTokens": 33822,
+      "providerAudioTokensDespiteNoAudioStream": 3570,
+      "outputTokens": 570,
+      "estimatedUSD": 0.0140706,
+      "reservedUSD": 0.074782,
+      "verdict": "revise"
+    }
+  ],
+  "completedAnalyses": 3,
+  "estimatedTotalUSD": 0.0420048,
+  "budgetUSD": 0.5,
+  "billingVerified": false,
+  "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing#gemini-2.5-flash",
+  "pricingDate": "2026-10-21",
+  "providerUsageReceived": true,
+  "note": "Estimate from actual usageMetadata and standard list rates, not a billing invoice. All inputs deliberately have zero audio streams; provider still reports AUDIO tokens. No additional model calls after these three."
+}
