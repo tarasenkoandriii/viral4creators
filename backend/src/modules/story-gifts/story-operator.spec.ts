@@ -573,8 +573,14 @@ describe('StoryOperatorService — привязка подтверждённог
     return jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
       durationSeconds: 58.72,
       tracks: [
-        { kind: 'video', width: 1280, height: 720, durationSeconds: 58.72 },
-        { kind: 'audio', durationSeconds: 58.7 },
+        {
+          kind: 'video',
+          width: 1280,
+          height: 720,
+          durationSeconds: 58.72,
+          samples: 1468,
+        },
+        { kind: 'audio', durationSeconds: 58.7, samples: 2752 },
       ],
     } as any);
   };
@@ -679,8 +685,14 @@ describe('StoryOperatorService — привязка подтверждённог
     mp4().mockReturnValue({
       durationSeconds: 12,
       tracks: [
-        { kind: 'video', width: 1280, height: 720, durationSeconds: 12 },
-        { kind: 'audio', durationSeconds: 12 },
+        {
+          kind: 'video',
+          width: 1280,
+          height: 720,
+          durationSeconds: 12,
+          samples: 300,
+        },
+        { kind: 'audio', durationSeconds: 12, samples: 563 },
       ],
     } as any);
     ffmpeg.status.mockResolvedValue({

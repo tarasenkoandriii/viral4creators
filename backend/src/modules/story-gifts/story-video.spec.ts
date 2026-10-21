@@ -579,6 +579,50 @@ describe('Reusable story master, separate speech and preamble', () => {
     expect((await s.service.status('u', 'g', 'r1')).status).toBe('FAILED');
     expect(s.rows[0].assetTokenHash).toBeNull();
   });
+  it.each(['short-video', 'long-audio'])(
+    'rejects %s as final without retrying assembly or download',
+    async (mode) => {
+      const s = setup();
+      await s.service.create('u', 'g', 'Привет');
+      const seconds = s.rows[0].durationSeconds;
+      s.ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'story.mp4': 'https://result.test/out.mp4' },
+      });
+      (readBodyWithLimit as jest.Mock).mockResolvedValue(Buffer.alloc(2048));
+      const probe = jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
+        durationSeconds: seconds,
+        tracks: [
+          {
+            kind: 'video',
+            width: 1280,
+            height: 720,
+            samples: 1500,
+            durationSeconds: mode === 'short-video' ? 1 : seconds,
+          },
+          {
+            kind: 'audio',
+            samples: 2800,
+            durationSeconds: mode === 'long-audio' ? seconds + 3 : seconds,
+          },
+        ],
+      } as any);
+      try {
+        expect((await s.service.status('u', 'g', 'r1')).status).toBe('FAILED');
+        expect(s.rows[0].assetTokenHash).toBeNull();
+        expect(s.rows[0].video).toBeFalsy();
+        const downloads = (readBodyWithLimit as jest.Mock).mock.calls.length;
+        await s.service.status('u', 'g', 'r1');
+        expect((readBodyWithLimit as jest.Mock).mock.calls.length).toBe(
+          downloads,
+        );
+        expect(s.ffmpeg.status).toHaveBeenCalledTimes(1);
+        expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+      } finally {
+        probe.mockRestore();
+      }
+    },
+  );
   it('ST2-S-05: a completed MP4 over 3 MiB is a final FAILED, never downloaded again', async () => {
     const s = setup();
     await s.service.create('u', 'g', 'Привет');
@@ -814,8 +858,18 @@ describe('Story read-only background recovery', () => {
     return jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
       durationSeconds: s.rows[0].durationSeconds,
       tracks: [
-        { kind: 'video', width: 1280, height: 720 },
-        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+        {
+          kind: 'video',
+          width: 1280,
+          height: 720,
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 1500,
+        },
+        {
+          kind: 'audio',
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 2800,
+        },
       ],
     } as any);
   }
@@ -852,8 +906,18 @@ describe('Story read-only background recovery', () => {
     const probe = jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
       durationSeconds: s.rows[0].durationSeconds,
       tracks: [
-        { kind: 'video', width: 1280, height: 720 },
-        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+        {
+          kind: 'video',
+          width: 1280,
+          height: 720,
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 1500,
+        },
+        {
+          kind: 'audio',
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 2800,
+        },
       ],
     } as any);
     try {
@@ -2688,8 +2752,18 @@ describe('ST3-S-14/S-15: capture on delivery; a deleted narrator variant is not 
     const probe = jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
       durationSeconds: s.rows[0].durationSeconds,
       tracks: [
-        { kind: 'video', width: 1280, height: 720 },
-        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+        {
+          kind: 'video',
+          width: 1280,
+          height: 720,
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 1500,
+        },
+        {
+          kind: 'audio',
+          durationSeconds: s.rows[0].durationSeconds,
+          samples: 2800,
+        },
       ],
     } as any);
     try {

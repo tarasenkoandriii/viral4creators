@@ -27,14 +27,17 @@ const isBodyTooLarge = (e: unknown) =>
  * owner's status poll, the cron reconciliation and the operator binding of a
  * confirmed job, so all three accept exactly the same container.
  * Throws `StoryVideoRejectedError` (message 'Invalid container') for a result
- * that must not be accepted, incl. an output over `STORY_MAX_VIDEO`; any other
+ * that must not be accepted, incl. an output over `STORY_MAX_VIDEO`. The
+ * movie header alone can hide a truncated video or an overlong audio track;
+ * the single nonempty pair must align within 150 ms (including AAC rounding). Any other
  * error means "not confirmed yet" (network, provider).
  */
 export async function downloadStoryVideo(
   url: string | undefined,
   expectedSeconds: number,
 ) {
-  if (!url) throw new StoryVideoRejectedError();
+  if (!url || !Number.isFinite(expectedSeconds) || expectedSeconds <= 0)
+    throw new StoryVideoRejectedError();
   const res = await fetchPubliclyRoutable(url, {
     signal: AbortSignal.timeout(20000),
   });
@@ -51,17 +54,28 @@ export async function downloadStoryVideo(
     throw e;
   }
   const probe = probeMp4(bytes),
-    video = probe?.tracks.find((t) => t.kind === 'video'),
-    audio = probe?.tracks.find((t) => t.kind === 'audio');
+    videos = probe?.tracks.filter((t) => t.kind === 'video') ?? [],
+    audios = probe?.tracks.filter((t) => t.kind === 'audio') ?? [],
+    video = videos[0],
+    audio = audios[0];
   if (
     !probe ||
     bytes.length < 1024 ||
-    !video ||
-    !audio ||
+    videos.length !== 1 ||
+    audios.length !== 1 ||
+    !Number.isFinite(probe.durationSeconds) ||
+    !Number.isFinite(video.durationSeconds) ||
+    !Number.isFinite(audio.durationSeconds) ||
+    !Number.isSafeInteger(video.samples) ||
+    video.samples <= 0 ||
+    !Number.isSafeInteger(audio.samples) ||
+    audio.samples <= 0 ||
     video.width !== 1280 ||
     video.height !== 720 ||
     Math.abs(probe.durationSeconds - expectedSeconds) > 0.15 ||
-    audio.durationSeconds + 0.15 < expectedSeconds
+    Math.abs(video.durationSeconds - expectedSeconds) > 0.15 ||
+    Math.abs(audio.durationSeconds - expectedSeconds) > 0.15 ||
+    Math.abs(video.durationSeconds - audio.durationSeconds) > 0.15
   )
     throw new StoryVideoRejectedError();
   return {
