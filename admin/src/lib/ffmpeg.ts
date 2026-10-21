@@ -781,7 +781,7 @@ export function normalizeJobDetail(raw: unknown): FfmpegJobDetail {
   const inNames = [
     ...new Set([
       ...arr(get(d, 'input_names')).filter((n): n is string => typeof n === 'string'),
-      ...metaIn.map((m) => str(m.key)).filter((n): n is string => !!n),
+      ...metaIn.map((m) => str(m.name) ?? str(m.key)).filter((n): n is string => !!n),
     ]),
   ];
   const stderrRaw = str(get(d, 'stderr_tail')) ?? str(d.stderr);
@@ -815,7 +815,7 @@ export function normalizeJobDetail(raw: unknown): FfmpegJobDetail {
           note: eventNote(t.data ?? t.note),
         };
       }),
-    inputs: inNames.map((n) => fileInfo(n, metaIn.find((m) => m.key === n))),
+    inputs: inNames.map((n) => fileInfo(n, metaIn.find((m) => (str(m.name) ?? str(m.key)) === n))),
     outputs: outNames.map((n) => fileInfo(n, arts.find((a) => a.name === n), isObj(metaOut[n]) ? (metaOut[n] as Obj) : null)),
     resources: res
       ? {

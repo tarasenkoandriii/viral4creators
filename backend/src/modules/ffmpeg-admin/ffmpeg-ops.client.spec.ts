@@ -43,14 +43,27 @@ describe('sanitizeOps', () => {
     const out = sanitizeOps({
       error_message:
         'fetch https://s.test/a.mp4?token=SECRET failed; Bearer abc.def',
+      inputs_metadata: [
+        {
+          key: 'base',
+          sha256: 'a'.repeat(64),
+          api_key: 'SECRET',
+          streams: [{ type: 'video' }],
+        },
+        { key: 'https://secret.test/?token=X' },
+      ],
       input_files: { base: 'https://s.test/a?sig=1', subs: 'https://s.test/b' },
       output_files: { 'out.mp4': 'https://f.test/out?token=T' },
     }) as Record<string, unknown>;
     expect(out).toEqual({
       error_message: 'fetch [url] failed; [auth]',
+      inputs_metadata: [
+        { name: 'base', sha256: 'a'.repeat(64), streams: [{ type: 'video' }] },
+      ],
       input_names: ['base', 'subs'],
       output_names: ['out.mp4'],
     });
+    expect(sanitizeOps(out)).toEqual(out);
   });
 
   it('stderr ограничен 64 KiB', () => {

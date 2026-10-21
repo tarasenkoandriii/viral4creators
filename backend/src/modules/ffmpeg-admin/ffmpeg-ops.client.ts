@@ -113,6 +113,25 @@ export function sanitizeOps(value: unknown, depth = 0): unknown {
         out.input_names = Object.keys(v as Record<string, unknown>);
         continue;
       }
+      if (k === 'inputs_metadata' && Array.isArray(v)) {
+        // `key` is a logical input alias here, but globally remains secret.
+        // Publish only a bounded name in this exact metadata envelope.
+        out[k] = v.slice(0, 500).flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+            return [];
+          const alias =
+            (entry as Record<string, unknown>).key ??
+            (entry as Record<string, unknown>).name;
+          if (
+            typeof alias !== 'string' ||
+            !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(alias)
+          )
+            return [];
+          const safe = sanitizeOps(entry, depth + 2) as Record<string, unknown>;
+          return [{ ...safe, name: alias }];
+        });
+        continue;
+      }
       if (isSecretField(k)) continue;
       if (/stderr/i.test(k) && typeof v === 'string') {
         out[k] = clipUtf8(sanitizeOps(v) as string, FFMPEG_STDERR_MAX_BYTES);

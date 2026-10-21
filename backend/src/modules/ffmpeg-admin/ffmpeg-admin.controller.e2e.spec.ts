@@ -285,6 +285,17 @@ describe('/api/admin/ffmpeg (e2e)', () => {
         body: {
           data: {
             id: 'job-1',
+            input_files: { source: SIGNED },
+            inputs_metadata: [
+              {
+                key: 'source',
+                bytes: 5,
+                sha256: 'a'.repeat(64),
+                mime: 'video/mp4',
+                streams: [{ type: 'video' }],
+                api_key: 'client-secret-key',
+              },
+            ],
             status: 'succeeded',
             client_operation_id: 'story:story-video:r1',
             output_files: {
@@ -594,6 +605,15 @@ describe('/api/admin/ffmpeg (e2e)', () => {
 
     it('jobs/:id: карточка без токенов, stderr ≤ 64 KiB, ссылка на исходную операцию и журнал', async () => {
       const res = await get('/jobs/selfhosted:job-1').expect(200);
+      expect(res.body.data.data.inputs_metadata).toEqual([
+        {
+          name: 'source',
+          bytes: 5,
+          sha256: 'a'.repeat(64),
+          mime: 'video/mp4',
+          streams: [{ type: 'video' }],
+        },
+      ]);
       const d = res.body.data;
       expect(d.provider).toBe('selfhosted');
       expect(d.data.output_names).toEqual(['out.mp4']);

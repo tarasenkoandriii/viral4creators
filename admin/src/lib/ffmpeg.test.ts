@@ -416,7 +416,7 @@ async function main() {
       input_names: ['base', 'https://storage.example/v.mp4?token=abc'],
       output_names: ['poster.jpg', 'x'],
       inputs_metadata: [
-        { key: 'base', bytes: 5, sha256: 'B'.repeat(64), mime: 'video/mp4', format: 'mov', durationSec: 1.5, streams: [{ type: 'video', codec: 'h264', width: 1280, height: 720 }] },
+        { name: 'base', bytes: 5, sha256: 'B'.repeat(64), mime: 'video/mp4', format: 'mov', durationSec: 1.5, streams: [{ type: 'video', codec: 'h264', width: 1280, height: 720 }] },
       ],
       outputs_metadata: { 'poster.jpg': { bytes: 10, sha256: 'A'.repeat(64), mime: 'image/jpeg' } },
       artifacts: [
