@@ -1,4 +1,6 @@
+/// <reference lib="dom" />
 import { createHash, createHmac } from 'node:crypto';
+import { VoiceStream } from '../../widget/src/chat/voice-stream';
 import { createServer } from 'node:http';
 import { once, EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
@@ -258,6 +260,70 @@ describe('Soniox in the existing relay (no provider network)', () => {
     ).toBeNull();
     expect(upstreams).toHaveLength(1);
     expect(upstreams[0].terminated).toBe(true);
+  });
+
+  it('connects the real widget transport to relay and backend verifier, including Stop', async () => {
+    const localUrl = url;
+    // Only the socket URL is adapted: all wire messages use production code.
+    class LocalSocket extends WebSocket {
+      constructor() {
+        super(localUrl);
+      }
+    }
+    let failed = 0;
+    let issued = 0;
+    const authorize = async () => ({
+      url: 'wss://relay.example/voice/stream',
+      ...signStreamGrant(secret, {
+        boot: relay.boot,
+        id: `widget-${++issued}`,
+        expires: Date.now() + 5000,
+        seconds: 5,
+        siteId: 'sandbox-site',
+        visitorId: 'sandbox-visitor',
+      }),
+    });
+    const widget = new VoiceStream(
+      authorize,
+      () => failed++,
+      LocalSocket as unknown as typeof globalThis.WebSocket,
+    );
+    widget.audio(new Blob([new Uint8Array(320)]));
+    const pending = widget.finish();
+    await until(() => upstreams.length === 1 && upstreams[0].sent.includes(''));
+    expect(upstreams[0].sent.filter(Buffer.isBuffer)).toHaveLength(1);
+    upstreams[0].emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          tokens: [{ text: 'Стоп', confidence: 0.99, is_final: true }],
+          finished: true,
+        }),
+      ),
+    );
+    const receipt = await pending;
+    expect(
+      readStreamFinal(
+        secret,
+        receipt,
+        'sandbox-site',
+        'sandbox-visitor',
+        Date.now(),
+      )?.tokens[0].text,
+    ).toBe('Стоп');
+    expect(failed).toBe(0);
+    const stopped = new VoiceStream(
+      authorize,
+      () => failed++,
+      LocalSocket as unknown as typeof globalThis.WebSocket,
+    );
+    await until(() => upstreams.length === 2);
+    stopped.stop();
+    await expect(stopped.result).rejects.toThrow('stream stopped');
+    await until(() => upstreams[1].terminated);
+    expect(failed).toBe(1);
+    expect(issued).toBe(2);
+    expect(upstreams).toHaveLength(2); // Each explicit session once; no retry.
   });
 
   it('overspeed PCM fails closed and is not forwarded', async () => {
