@@ -43,7 +43,7 @@ import { PAGES } from '../../src/lib/pages';
 import { cspLines, embedTag } from '../../src/lib/install';
 import { attr, claimViolations, elementsWith, headTags, jsonLdViolations } from '../lib/html';
 import { readAssistEnv } from '../../src/lib/assist-env';
-import { BRAND_IS_PLACEHOLDER, brandDisplayName, WIDGET_NAMES } from '../../src/brand';
+import { BRAND_IS_PLACEHOLDER, brandDisplayName, WIDGET_NAMES, PRODUCT_LINKS } from '../../src/brand';
 
 const ROOT = path.join(__dirname, '..', '..');
 const APP = path.join(ROOT, '.next', 'server', 'app');
@@ -172,7 +172,9 @@ for (const f of htmlFiles) {
   const rel = path.relative(APP, f);
   if (loaderRe.test(html) || /<script\b[^>]*\sdata-site=/.test(html)) problems.push(`${rel}: тег загрузчика виджета в HTML (должен вставляться после load/idle)`);
   const visible = html.replace(/<script[\s\S]*?<\/script>/g, '');
-  if (/t\.me\/|startapp=/.test(visible)) problems.push(`${rel}: ссылка в Telegram в статическом HTML`);
+  // Allow only the exact public operator contact, never product deep links.
+  const productVisible = visible.replaceAll(`href="${PRODUCT_LINKS.contact}"`, 'href="/operator-contact"');
+  if (/t\.me\/|startapp=/.test(productVisible)) problems.push(`${rel}: ссылка в Telegram в статическом HTML`);
 }
 for (const l of locales) {
   const html = read(`${l}/assistant.html`);
@@ -263,6 +265,6 @@ assert.deepEqual(problems, [], `собранный сайт:\n${problems.join('\
 console.log(
   `ok   собранный сайт: ${pages} страниц × локалей — lang, один h1, canonical, hreflang+x-default, OG/Twitter, реестр утверждений, таблицы, JSON-LD без цен/оферт; ` +
     `noindex у ${noindexFiles.length} служебных; ${files.length} клиентских файлов без секретов${token ? ' (с приманкой токена)' : ' (БЕЗ приманки: PILOT_TELEGRAM_BOT_TOKEN не задан)'}; ` +
-      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран; песочница, страница бота с opt-out, документация uk/en с кодом для origin из env; ` +
+      `${htmlFiles.length} HTML без тега загрузчика и ссылок подключения Mini App; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран; песочница, страница бота с opt-out, документация uk/en с кодом для origin из env; ` +
       `заглушки бренда нет в ${brandScanned} собранных файлах, имя на языке страницы — в шапке, og:site_name и JSON-LD`,
 );

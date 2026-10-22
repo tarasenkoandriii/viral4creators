@@ -29,7 +29,7 @@ import assert from 'node:assert/strict';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CLAIMS, heroVariant, type ClaimDef, type ClaimId, type ClaimRegistry } from '../src/lib/claims';
-import { QA_LINKS } from '../src/brand';
+import { QA_LINKS, PRODUCT_LINKS } from '../src/brand';
 import { getDictionary } from '../src/lib/get-dictionary';
 import { locales, type Locale } from '../src/lib/i18n';
 import { claimViolations } from './lib/html';
@@ -101,8 +101,10 @@ async function main() {
       // 5. Следов hidden-фич нет и без data-claim: ни ссылок на /cases,
       // /compare, /blog, ни t.me-ссылок.
       if (/\{[a-zA-Z]+\}|%%[A-Za-z]+%%/.test(html.replace(/<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>/g, ''))) problems.push(`${key}/${locale}: неподставленный плейсхолдер`);
+      // The owner explicitly chose this public contact; Mini App links remain gated.
+      const productHtml = html.replaceAll(`href="${PRODUCT_LINKS.contact}"`, 'href="/operator-contact"');
       for (const bad of ['/assistant/cases', '/assistant/compare', '/blog', 't.me/', 'startapp=']) {
-        if (html.includes(bad)) problems.push(`${key}/${locale}: след скрытой фичи «${bad}»`);
+        if (productHtml.includes(bad)) problems.push(`${key}/${locale}: след скрытой фичи «${bad}»`);
       }
     }
     // Документация не во всех локалях: ru — 404.

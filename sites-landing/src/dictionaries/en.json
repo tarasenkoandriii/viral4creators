@@ -1399,7 +1399,7 @@
     "qaCta": "Discuss a website review",
     "beta": "Beta: test forms, lists and mock APIs",
     "betaText": "The prepared sandbox supports safe workflow testing. The test-stand generator is limited to forms, lists and mock APIs; it does not reproduce arbitrary websites or prove complete coverage.",
-    "contactUnavailable": "To discuss a pilot, contact the company page. Include your website, task, language and device so we can assess a suitable workflow.",
-    "contactDirect": "Contact us on LinkedIn"
+    "contactUnavailable": "To discuss a pilot, contact @ConscienceUkraine on Telegram. Include your website, task, language and device so we can assess a suitable workflow.",
+    "contactDirect": "Contact us on Telegram"
   }
 }
