@@ -1052,7 +1052,11 @@
     "marketplace": "Marktplatz",
     "greetings": "Grußvideos",
     "siteTutorial": "Website-Anleitungen",
-    "platformStatus": "Die Browser-Infrastruktur für Tutorial, QA und den KI-Assistenten läuft. Abläufe auf Kundenwebsites werden im Pilotbetrieb geprüft."
+    "platformStatus": "Die Browser-Infrastruktur für Tutorial, QA und den KI-Assistenten läuft. Abläufe auf Kundenwebsites werden im Pilotbetrieb geprüft.",
+    "assistant": "Website-Assistent",
+    "voiceControl": "Sprachsteuerung",
+    "websiteQa": "Website-QA",
+    "stories": "Story-Tales"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

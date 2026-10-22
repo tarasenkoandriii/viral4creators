@@ -2,6 +2,8 @@ import type { Dictionary } from '../lib/get-dictionary';
 import type { Locale } from '../lib/i18n';
 import { GREETING_SITE_URL } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL } from '../lib/tutorial-host';
+import { STORIES_SITE_URL } from '../lib/stories-host';
+import { isStoriesOpen, storiesLandingMode } from '../lib/stories/landing-mode';
 import {
   CLAUDE_REFERRAL_URL,
   GITHUB_REPO_URL,
@@ -34,6 +36,8 @@ import {
  * текст со ссылкой на шаги.
  */
 export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary; locale: Locale; demoHref?: '#demo' | '#how' }) {
+  const assistLocale = ['ru', 'uk', 'en'].includes(locale) ? locale : 'en';
+  const assistLanguageNote = assistLocale === locale ? '' : ' (EN)';
   return (
     <footer>
       <div className="wrap footer-inner">
@@ -49,6 +53,10 @@ export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary;
           <a href={`${TUTORIAL_SITE_URL}/${locale}`}>
             {dict.footer.siteTutorial}
           </a>
+          <a href={`https://assist.viral4creators.app/${assistLocale}/assistant`} hrefLang={assistLocale}>{dict.footer.assistant}{assistLanguageNote}</a>
+          <a href={`https://assist.viral4creators.app/${assistLocale}/hands-free`} hrefLang={assistLocale}>{dict.footer.voiceControl}{assistLanguageNote}</a>
+          <a href={`https://assist.viral4creators.app/${assistLocale}/qa`} hrefLang={assistLocale}>{dict.footer.websiteQa}{assistLanguageNote}</a>
+          {isStoriesOpen(storiesLandingMode()) && <a href={`${STORIES_SITE_URL}/${locale}`}>{dict.footer.stories}</a>}
           <a href={MARKETPLACE_URL}>{dict.footer.marketplace}</a>
           <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
             {dict.footer.github}

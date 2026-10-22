@@ -126,6 +126,14 @@
     "integrations-tilda": {
       "title": "AI chatbot for Tilda — {brand}",
       "description": "How to connect the {brand} AI assistant to a Tilda site: HTML code in HEAD, verification of your own domain only (not tilda.ws), republishing pages."
+    },
+    "hands-free": {
+      "title": "Voice control — Viral4Creators",
+      "description": "Voice conversation and website control with configured workflows, confirmations and Stop. Explore the sandbox and apply for a limited Viral4Creators pilot."
+    },
+    "qa": {
+      "title": "Website QA — Viral4Creators",
+      "description": "Website QA: manual checks, findings, private evidence and MD/PDF reports. Start with one form and understand the limits of automated testing."
     }
   },
   "og": {
@@ -1361,5 +1369,37 @@
     "tryPage.sandbox.mockCaption": "Mock-up, not a screenshot. The widget is not installed on {host}; the site is not affiliated with us.",
     "botPage.heading": "The AI assistant crawler",
     "botPage.lead": "This bot reads public pages of websites when someone starts an AI assistant sandbox or when a site owner connects the assistant. Here is how to recognise it, stop it and remove your site."
+  },
+  "voiceLanding": {
+    "nav": "Voice control",
+    "title": "Say the task. Stay in control.",
+    "lead": "Voice assistance for websites and workflows: ask a question, find the right page and complete a configured task with action confirmations.",
+    "dialog": "Voice conversation",
+    "dialogText": "Visitors ask out loud and receive answers from the website’s knowledge. For product questions, customer support and onboarding.",
+    "control": "Voice control",
+    "controlText": "A command becomes a plan within a configured workflow. Users review the next step, confirm consequential actions and can stop execution.",
+    "flow": [
+      "Say the task",
+      "Review the plan",
+      "Confirm the action",
+      "Check the result"
+    ],
+    "pilot": "Pilot on your website",
+    "demo": "Open the test sandbox",
+    "limits": "Voice features are under pilot validation. HTTPS, microphone permission and a supported browser are required. Hands-free requires explicit opt-in; Stop ends the session. Acceptance across phones, Telegram, noise and echo is still pending. Streaming is not enabled for all users.",
+    "boundaries": "Control boundaries",
+    "safety": "The assistant does not receive unrestricted control of a website. Only agreed pages and workflows; no bypassing sign-in, protections or confirmations. Do not enter personal data in the demonstration.",
+    "task": "Describe the task, language and device",
+    "family": "One workflow across the system",
+    "familyText": "Tutorial demonstrates a process in a short video. The assistant answers questions. Voice helps users follow configured steps. QA keeps findings and verification results.",
+    "meta": "Voice conversation and website control with configured workflows, confirmations and Stop. Explore the sandbox and apply for a limited Viral4Creators pilot.",
+    "qaMeta": "Website QA: manual checks, findings, private evidence and MD/PDF reports. Start with one form and understand the limits of automated testing.",
+    "qaNav": "Website QA",
+    "qaTitle": "Check the task. Give your team a clear report.",
+    "qaCta": "Discuss a website review",
+    "beta": "Beta: test forms, lists and mock APIs",
+    "betaText": "The prepared sandbox supports safe workflow testing. The test-stand generator is limited to forms, lists and mock APIs; it does not reproduce arbitrary websites or prove complete coverage.",
+    "contactUnavailable": "The pilot form is not connected to a recipient yet. Contact the company page with your website, task, language and device. Form data is not being sent.",
+    "contactDirect": "Contact us on LinkedIn"
   }
 }

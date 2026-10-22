@@ -1699,3 +1699,8 @@ thead th {
 .optout-form {
   margin-top: 16px;
 }
+
+.voice-flow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; padding:2rem 0; list-style:none; }
+.voice-flow li { display:flex; flex-direction:column; gap:.8rem; padding:1rem; border-top:2px solid currentColor; }
+.voice-flow li span { font-size:1.5rem; opacity:.65; }
+@media(max-width:640px) { .voice-flow { grid-template-columns:repeat(2,minmax(0,1fr)); } }

@@ -1052,7 +1052,11 @@
     "marketplace": "Marketplace",
     "greetings": "Greetings",
     "siteTutorial": "Site walkthroughs",
-    "platformStatus": "The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation."
+    "platformStatus": "The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation.",
+    "assistant": "Website assistant",
+    "voiceControl": "Voice control",
+    "websiteQa": "Website QA",
+    "stories": "Story-Tales"
   },
   "notFound": {
     "title": "Page not found",

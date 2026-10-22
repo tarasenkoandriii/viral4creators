@@ -234,7 +234,7 @@ export const de: StoriesCopy = {
       howLead: 'So funktioniert der Märchen-Assistent für Pilotteilnehmer. Unten steht eine Beschreibung der Schritte, kein Formular: Alles geschieht in der App.',
       howAppLead: `Die Bewerbung für den Pilot erfolgt im Bereich ${BRAND} der App.`,
       catalogStatus: 'Pilotkatalog',
-      catalogText: 'Im Pilot gibt es nur fertige Geschichten mit geprüften Rechten an der Ausgabe. Neue Geschichten und Sprachen kommen nach den Ergebnissen des Pilots hinzu.',
+      catalogText: 'Im Pilot gibt es nur fertige Geschichten mit geprüften Rechten an der Ausgabe. Neue Geschichten und Sprachen kommen nach den Ergebnissen des Pilots hinzu. Beginnen Sie mit einer fertigen Geschichte aus der Bibliothek. YouTube ist ein optionaler Prototyp zur Referenzanalyse, kein Pflichtschritt und keine Übernahme fremder Bilder oder Musik.',
       available: [
         `Bewerbung für den Pilot — im Bereich ${BRAND} der App.`,
         'Der Märchen-Assistent für Teilnehmer: Geschichte wählen, Botschaft aufnehmen und Ergebnis prüfen.',
@@ -265,7 +265,7 @@ export const de: StoriesCopy = {
       howLead: 'So funktioniert der Märchen-Assistent. Unten steht eine Beschreibung der Schritte, kein Formular: Alles geschieht in der App.',
       howAppLead: `Der Märchen-Assistent ist im Bereich ${BRAND} der App.`,
       catalogStatus: 'Katalog',
-      catalogText: 'Im Katalog gibt es nur Geschichten mit geprüften Rechten an der Ausgabe.',
+      catalogText: 'Im Katalog gibt es nur Geschichten mit geprüften Rechten an der Ausgabe. Beginnen Sie mit einer fertigen Geschichte aus der Bibliothek. YouTube ist ein optionaler Prototyp zur Referenzanalyse, kein Pflichtschritt und keine Übernahme fremder Bilder oder Musik.',
       available: [
         'Der Märchen-Assistent: Geschichte wählen, Botschaft aufnehmen und Ergebnis prüfen.',
         'Erzählerstimme: Standardstimme oder Klon der Stimme des erwachsenen Erzählers mit seiner Zustimmung; ein synthetisches Aussehen — später.',

@@ -41,6 +41,8 @@ export function navLabel(locale: Locale, key: PageKey): string {
   const n = dict.common.nav;
   const map: Record<PageKey, string> = {
     ...(Object.fromEntries(PLATFORMS.map((p) => [`integrations-${p.slug}`, dict.platforms[p.slug].name])) as Record<`integrations-${(typeof PLATFORMS)[number]['slug']}`, string>),
+    'hands-free': dict.voiceLanding.nav,
+    qa: dict.voiceLanding.qaNav,
     try: n.try,
     bot: n.bot,
     integrations: n.integrations,

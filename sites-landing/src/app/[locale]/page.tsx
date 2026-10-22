@@ -46,11 +46,12 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
             </div>
             <div className="card">
               <ClaimCard as="div" claim={h.qa.claim} dict={dict} title={h.qa.title} text={h.qa.text} />
-              {qaLive && <p><a href="#qa">{h.qa.more}</a></p>}
+              {qaLive && <p><a href={href(locale, 'qa')}>{h.qa.more}</a></p>}
             </div>
           </div>
         </div>
       </section>
+      <section className="section wrap"><h2>{dict.voiceLanding.nav}</h2><p>{dict.voiceLanding.lead}</p><p><a className="button" href={href(locale, 'hands-free')}>{dict.voiceLanding.nav}</a></p></section>
       {qaLive && <section id="qa" className="section wrap" aria-labelledby="qa-heading" data-claim="qa-product" data-claim-status="live">
         <h2 id="qa-heading">{h.qa.heading}</h2>
         <ul>{h.qa.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
@@ -67,7 +68,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
         </div>
         <p>{h.qa.limits}</p>
         <p>{h.qa.privacy}</p>
-        <p>{h.qa.roadmap}</p>
+        <p>{h.qa.roadmap}</p><h3>{dict.voiceLanding.beta}</h3><p>{dict.voiceLanding.betaText}</p>
       </section>}
       <section className="section wrap" aria-labelledby="pilot-heading">
         <ClaimCard

@@ -234,7 +234,7 @@ export const en: StoriesCopy = {
       howLead: 'This is how the tale builder works for pilot participants. Below is a description of the steps, not a form: everything happens in the app.',
       howAppLead: `Applications to join the pilot are made in the ${BRAND} section of the app.`,
       catalogStatus: 'Pilot catalogue',
-      catalogText: 'The pilot includes only ready-made tales with verified rights to the edition. New tales and languages will be added based on the results of the pilot.',
+      catalogText: 'The pilot includes only ready-made tales with verified rights to the edition. New tales and languages will be added based on the results of the pilot. Start with a ready-made tale from the library. YouTube is an optional reference-analysis prototype, not a required step or a way to reuse someone else’s footage or music.',
       available: [
         `Applying to join the pilot — in the ${BRAND} section of the app.`,
         'The tale builder for participants: choosing a tale, recording the message and checking the result.',
@@ -265,7 +265,7 @@ export const en: StoriesCopy = {
       howLead: 'This is how the tale builder works. Below is a description of the steps, not a form: everything happens in the app.',
       howAppLead: `The tale builder is in the ${BRAND} section of the app.`,
       catalogStatus: 'Catalogue',
-      catalogText: 'The catalogue includes only tales with verified rights to the edition.',
+      catalogText: 'The catalogue includes only tales with verified rights to the edition. Start with a ready-made tale from the library. YouTube is an optional reference-analysis prototype, not a required step or a way to reuse someone else’s footage or music.',
       available: [
         'The tale builder: choosing a tale, recording the message and checking the result.',
         'Narrator voice: a standard one or a clone of the adult narrator’s voice with their consent; a synthetic look — later.',

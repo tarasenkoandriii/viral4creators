@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { PRODUCT_LINKS } from './brand';
+import { siteUrl } from './lib/site-url';
 import {
   isLocale,
   LOCALE_COOKIE,
@@ -35,6 +37,18 @@ export function localeOfPath(pathname: string): Locale | null {
 export function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const current = localeOfPath(pathname);
+  // Campaign hostname has one canonical destination, without a second copy
+  // of the assistant homepage or a language fixed in shared links.
+  if (request.nextUrl.hostname.toLowerCase() === PRODUCT_LINKS.voiceHost) {
+    const locale = current ?? visitorLocale(request.cookies.get(LOCALE_COOKIE)?.value,
+      request.headers.get('accept-language'), request.headers.get('x-vercel-ip-country'));
+    const target = new URL(`/${locale}/hands-free`, siteUrl());
+    target.search = request.nextUrl.search;
+    const res = NextResponse.redirect(target, 307);
+    res.headers.set('Vary', 'Accept-Language, Cookie, X-Vercel-IP-Country');
+    res.headers.set('Cache-Control', 'private, no-store');
+    return res;
+  }
 
   if (current) {
     const chosen = searchParams.get(LOCALE_SWITCH_PARAM);

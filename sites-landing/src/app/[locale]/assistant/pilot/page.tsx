@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '../../../../components/Breadcrumbs';
 import { ClaimSection } from '../../../../components/Claim';
-import { PilotForm } from '../../../../components/PilotForm';
+import { PilotContact } from '../../../../components/PilotContact';
 import { SiteChrome } from '../../../../components/SiteChrome';
 import { getDictionary } from '../../../../lib/get-dictionary';
 import type { Locale } from '../../../../lib/i18n';
@@ -37,7 +37,7 @@ export default async function PilotPage({ params }: { params: Promise<{ locale: 
       </ClaimSection>
       <section className="section section-alt">
         <div className="wrap">
-          <PilotForm locale={locale} strings={p.form} privacyHref="/legal/privacy" />
+          <PilotContact locale={locale} strings={p.form} privacyHref="/legal/privacy" />
         </div>
       </section>
     </SiteChrome>

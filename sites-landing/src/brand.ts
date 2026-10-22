@@ -82,6 +82,13 @@ export function brandDisplayName(locale: Locale): string {
  * ключа живого виджета на лендинге нет, без бота — нет кнопки «в Telegram»
  * (§7.1: выдуманное имя уводит к чужому боту).
  */
+export const PRODUCT_LINKS = {
+  contact: 'https://www.linkedin.com/company/viral4creators-org/',
+  sandbox: 'https://sandbox.viral4creators.app/',
+  tutorial: 'https://tutorial.viral4creators.app/',
+  voiceHost: 'hands-free.viral4creators.app',
+} as const;
+
 export const QA_LINKS = {
   dashboard: 'https://assist-app.viral4creators.app/#/sites',
   extension: 'https://assist-app.viral4creators.app/downloads/qa-form-capture.zip',

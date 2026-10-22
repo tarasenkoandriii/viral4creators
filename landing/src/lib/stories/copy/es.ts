@@ -234,7 +234,7 @@ export const es: StoriesCopy = {
       howLead: 'Así funciona el asistente de cuentos para los participantes del piloto. Abajo se describen los pasos, no es un formulario: todo ocurre en la aplicación.',
       howAppLead: `La solicitud para el piloto se hace en la sección ${BRAND} de la aplicación.`,
       catalogStatus: 'Catálogo del piloto',
-      catalogText: 'En el piloto solo hay cuentos listos con derechos verificados sobre la edición. Se añadirán nuevos cuentos e idiomas según los resultados del piloto.',
+      catalogText: 'En el piloto solo hay cuentos listos con derechos verificados sobre la edición. Se añadirán nuevos cuentos e idiomas según los resultados del piloto. Empiece con un cuento listo de la biblioteca. YouTube es un prototipo opcional para analizar referencias, no un paso obligatorio ni una forma de reutilizar imágenes o música ajenas.',
       available: [
         `Solicitud para participar en el piloto — en la sección ${BRAND} de la aplicación.`,
         'El asistente de cuentos para participantes: elegir el cuento, grabar el mensaje y revisar el resultado.',
@@ -265,7 +265,7 @@ export const es: StoriesCopy = {
       howLead: 'Así funciona el asistente de cuentos. Abajo se describen los pasos, no es un formulario: todo ocurre en la aplicación.',
       howAppLead: `El asistente de cuentos está en la sección ${BRAND} de la aplicación.`,
       catalogStatus: 'Catálogo',
-      catalogText: 'En el catálogo solo hay cuentos con derechos verificados sobre la edición.',
+      catalogText: 'En el catálogo solo hay cuentos con derechos verificados sobre la edición. Empiece con un cuento listo de la biblioteca. YouTube es un prototipo opcional para analizar referencias, no un paso obligatorio ni una forma de reutilizar imágenes o música ajenas.',
       available: [
         'El asistente de cuentos: elegir el cuento, grabar el mensaje y revisar el resultado.',
         'Voz del narrador: estándar o un clon de la voz del narrador adulto con su consentimiento; la apariencia sintética, más adelante.',

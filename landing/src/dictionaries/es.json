@@ -1052,7 +1052,11 @@
     "marketplace": "Marketplace",
     "greetings": "Felicitaciones",
     "siteTutorial": "Tutoriales de webs",
-    "platformStatus": "La infraestructura de navegador para Tutorial, QA y el asistente de IA está en marcha. Los flujos en sitios de clientes están en validación piloto."
+    "platformStatus": "La infraestructura de navegador para Tutorial, QA y el asistente de IA está en marcha. Los flujos en sitios de clientes están en validación piloto.",
+    "assistant": "Asistente web",
+    "voiceControl": "Control por voz",
+    "websiteQa": "QA de sitios",
+    "stories": "Story-Tales"
   },
   "notFound": {
     "title": "Página no encontrada",

@@ -41,6 +41,8 @@ export function SiteChrome({
 }) {
   const dict = getDictionary(locale);
   const nav: Array<{ key: PageKey; label: string }> = [
+    { key: 'hands-free', label: dict.voiceLanding.nav },
+    ...(claimStatus('qa-product') === 'live' ? [{ key: 'qa' as const, label: dict.voiceLanding.qaNav }] : []),
     { key: 'assistant', label: dict.common.nav.assistant },
     { key: 'how-it-works', label: dict.common.nav.howItWorks },
     // Конфигуратор `/widget` — Л3 (С2); без `configurator: live` пункта нет.
@@ -93,7 +95,6 @@ export function SiteChrome({
         </div>
         <nav className="wrap main-nav" aria-label={dict.common.nav.label}>
           <ul>
-            {claimStatus('qa-product') === 'live' && <li><a href={`${href(locale, 'home')}#qa`}>QA</a></li>}
             {nav.map((item) => (
               <li key={item.key}>
                 <a href={href(locale, item.key)} hrefLang={hrefLang(locale, item.key)} aria-current={item.key === navCurrent ? 'page' : undefined}>
