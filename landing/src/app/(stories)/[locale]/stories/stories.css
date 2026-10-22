@@ -905,3 +905,7 @@ html:has(.st-root) body {
    кроме унаследованных от `.cta`, — их, как и плавную прокрутку к якорям,
    гасит общее правило в начале `globals.css`. Добавляя сюда анимацию,
    закройте её тем же медиазапросом. */
+
+.st-hero { background:radial-gradient(ellipse at 85% 15%,rgba(217,135,77,.22),transparent 65%),radial-gradient(ellipse at 5% 85%,rgba(130,110,200,.12),transparent 55%); }
+
+.st-root { --media-surface: var(--st-card); --media-focus: var(--st-accent); }

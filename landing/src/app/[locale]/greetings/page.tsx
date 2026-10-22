@@ -1,3 +1,4 @@
+import { MediaShowcase } from '../../../components/MediaShowcase';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { Fragment, type ReactNode } from 'react';
@@ -177,6 +178,7 @@ export default async function GreetingsLandingPage({
        экрана, предзагрузка с высоким приоритетом там только мешала;
        `loading="eager"` — на десктопе кадр в первом экране. */
     hero: () => (
+      <>
       <section className="hero">
         <div className="wrap hero-grid">
           <div className="hero-copy">
@@ -199,6 +201,8 @@ export default async function GreetingsLandingPage({
           </div>
         </div>
       </section>
+      <MediaShowcase locale={locale} product="greetings" />
+      </>
     ),
 
     /* Витрина сразу под hero (§4 п.2 ТЗ лендинга): для этого запроса

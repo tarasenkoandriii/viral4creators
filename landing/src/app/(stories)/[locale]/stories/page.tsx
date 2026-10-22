@@ -1,3 +1,4 @@
+import { MediaShowcase } from '../../../../components/MediaShowcase';
 import type { Metadata, Viewport } from 'next';
 import { isLocale, locales, type Locale } from '../../../../lib/i18n';
 import { localeAlternates } from '../../../../lib/alternates';
@@ -388,6 +389,7 @@ export default async function StoriesLandingPage({
             />
           </div>
         </section>
+        {access ? <MediaShowcase locale={locale} product="stories" /> : null}
 
         {/* 6.3 Пример: в `prep` — схема без медиа и честная подпись. */}
         <section className="st-section st-section-alt" id="example" aria-labelledby="st-example-title">

@@ -1720,3 +1720,23 @@ thead th {
 .voice-faq details { border-bottom: 1px solid var(--border); padding: 1.25rem 0; }
 .voice-faq summary { cursor: pointer; font-weight: 600; }
 .voice-faq details p { max-width: 80ch; }
+
+:root { --media-surface:var(--surface); --media-focus:var(--focus); }
+
+/* Curated, click-to-load media. No autoplay before an explicit click. */
+.media-section { padding: clamp(2rem, 5vw, 4rem) 0; }
+.media-section > .wrap { max-width:1120px; margin:0 auto; padding:0 16px; }
+.media-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr)); gap:1.5rem; }
+.media-card { margin:0; border:1px solid var(--border); border-radius:20px; overflow:hidden; background:var(--media-surface); }
+.media-frame { aspect-ratio:16/9; background:#101d38; }
+.media-frame video,.media-frame img { display:block; width:100%; height:100%; object-fit:contain; }
+.media-launch { display:block; position:relative; padding:0; border:0; width:100%; height:100%; cursor:pointer; background:#101d38; color:#ffffff; }
+.media-play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:.75rem 1.15rem; border:2px solid #ffffff; border-radius:999px; background:#101d38; color:#ffffff; font-weight:700; white-space:nowrap; }
+.media-card figcaption { padding:1.25rem; }
+.media-card h3 { margin:0 0 .65rem; font-size:1.15rem; }
+.media-card p { margin:0; line-height:1.6; }
+.media-launch:focus-visible { outline:4px solid var(--media-focus); outline-offset:-5px; }
+
+.hero { position:relative; border-bottom:3px solid var(--accent); background:linear-gradient(135deg,var(--banner-bg),var(--bg) 75%); border-radius:0 0 28px 28px; }
+.card { border-top:3px solid var(--accent); }
+.section-alt { background-image:linear-gradient(135deg,var(--banner-bg),var(--surface) 65%); }

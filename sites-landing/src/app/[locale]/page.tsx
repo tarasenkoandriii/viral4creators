@@ -1,3 +1,4 @@
+import { MediaShowcase } from "../../components/MediaShowcase";
 import type { Metadata } from 'next';
 import { QA_LINKS } from '../../brand';
 import { ClaimCard } from '../../components/Claim';
@@ -32,6 +33,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
           </a>
         </p>
       </section>
+      <MediaShowcase locale={locale} product="voice" />
       <section className="section section-alt" aria-labelledby="products-heading">
         <div className="wrap">
           <h2 id="products-heading">{h.productsHeading}</h2>

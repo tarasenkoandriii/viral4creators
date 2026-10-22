@@ -1,3 +1,4 @@
+import { MediaShowcase } from '../../components/MediaShowcase';
 import { HeroPicture } from '../../components/HeroPicture';
 import { TutorialDemoGallery } from '../../components/TutorialDemoGallery';
 import { Header } from '../../components/Header';
@@ -36,9 +37,9 @@ export default async function LandingPage({
   const assist = assistWidgetFromBuildEnv();
   // Лента демо — один раз на страницу: галерея, кнопка первого экрана и
   // футер. Роликов для локали нет (или API не ответил) — «Смотреть демо»
-  // ведёт к шагам (#how), а не в секцию без видео.
+  // ведёт к локальным примерам (#watch), а не в пустую галерею.
   const demos = await loadTutorialDemos('ads', locale);
-  const demoHref = demos.items.length ? '#demo' : '#how';
+  const demoHref = demos.items.length ? '#demo' : '#watch';
 
   return (
     <>
@@ -73,8 +74,9 @@ export default async function LandingPage({
             </div>
           </div>
         </section>
+        <MediaShowcase locale={locale} product="ads" />
 
-        <TutorialDemoGallery scenario="ads" locale={locale} dict={dict} feed={demos} />
+        {demos.items.length > 0 ? <TutorialDemoGallery scenario="ads" locale={locale} dict={dict} feed={demos} /> : null}
 
         <section className="features" id="features">
           <div className="wrap">

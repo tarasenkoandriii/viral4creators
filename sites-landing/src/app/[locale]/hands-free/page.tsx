@@ -1,3 +1,4 @@
+import { MediaShowcase } from "../../../components/MediaShowcase";
 import type { Metadata } from "next";
 import { PRODUCT_LINKS } from "../../../brand";
 import { Breadcrumbs } from "../../../components/Breadcrumbs";
@@ -50,6 +51,7 @@ export default async function VoicePage({
           <p className="voice-example-note">{c.exampleNote}</p>
         </figure>
       </section>
+      <MediaShowcase locale={locale} product="voice" />
       <section className="section wrap">
         <h2>{c.usesTitle}</h2>
         <div className="grid">

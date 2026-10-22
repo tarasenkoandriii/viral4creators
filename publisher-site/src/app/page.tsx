@@ -1,3 +1,4 @@
+import { MediaShowcase } from '@/components/MediaShowcase';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import AltContact from '@/components/AltContact';
@@ -41,6 +42,7 @@ export default async function Home() {
         <p className="lead">{h.lead}</p>
         <Cta label={h.cta} id="home-hero" />
       </section>
+      <MediaShowcase locale="uk" product="publisher" />
 
       <section aria-labelledby="offer-title" data-block="offer">
         <h2 id="offer-title">{h.offerTitle}</h2>

@@ -1,3 +1,4 @@
+import { MediaShowcase } from "../../../components/MediaShowcase";
 import type { Metadata } from "next";
 import { PRODUCT_LINKS } from "../../../brand";
 import { QA_LINKS } from "../../../brand";
@@ -38,6 +39,7 @@ export default async function QaPage({
           </a>
         </p>
       </section>
+      <MediaShowcase locale={locale} product="qa" />
       <section className="section section-alt">
         <div className="wrap">
           <h2>{q.heading}</h2>

@@ -1,3 +1,4 @@
+import { MediaShowcase } from "../../../components/MediaShowcase";
 import type { Metadata } from 'next';
 import { Breadcrumbs } from '../../../components/Breadcrumbs';
 import { ClaimCard, visibleClaims } from '../../../components/Claim';
@@ -62,6 +63,7 @@ export default async function AssistantPage({ params }: { params: Promise<{ loca
           </a>
         </p>
       </section>
+      <MediaShowcase locale={locale} product="voice" />
 
       {/* Блок 2 (§3.2): живой виджет — если он есть в сборке (Л2, С2);
           иначе место под запись с честной подписью. */}

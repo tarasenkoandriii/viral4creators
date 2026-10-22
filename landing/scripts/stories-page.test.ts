@@ -132,11 +132,21 @@ async function main() {
     assert.match(open, new RegExp(`\\bdir="${LOCALE_DIR[locale]}"`), `${locale}: ${open}`);
     assert.match(html, /data-release-mode="prep"/, `${locale}: режим не prep`);
 
-    // ── §5.1: ничего, чего нет ──
-    for (const re of [/<video\b/, /<audio\b/, /<button\b/, /<form\b/, /<input\b/, /<textarea\b/, /<select\b/, /<iframe\b/, /<script\b/, /<img\b/]) {
-      assert.doesNotMatch(html, re, `${locale}: ${re} в режиме prep`);
+    // Owner request 22.10: a labelled process concept on open marketing pages.
+    // It does not enable product access, unreviewed output or a real product demo.
+    const concept = html.match(/<section class="media-section" id="watch">[\s\S]*?<\/section>/)?.[0] ?? '';
+    if (MODE === 'closed') assert.equal(concept, '');
+    else {
+      assert.ok(concept.includes(`/media/stories-process-${locale}.mp4`));
+      assert.ok(concept.includes(`/media/stories-process-${locale}.jpg`));
+      assert.doesNotMatch(concept, /<video\b|<audio\b|<form\b|<iframe\b|<script\b/);
     }
-    assert.doesNotMatch(html, /class="[^"]*\bplay/i, `${locale}: элемент Play`);
+    const prepHtml = html.replace(concept, '');
+    // ── §5.1: no unapproved product media outside that concept ──
+    for (const re of [/<video\b/, /<audio\b/, /<button\b/, /<form\b/, /<input\b/, /<textarea\b/, /<select\b/, /<iframe\b/, /<script\b/, /<img\b/]) {
+      assert.doesNotMatch(prepHtml, re, `${locale}: ${re} в режиме prep`);
+    }
+    assert.doesNotMatch(prepHtml, /class="[^"]*\bplay/i, `${locale}: элемент Play`);
     for (const id of ['create', 'example', 'lead'] as const) {
       assert.doesNotMatch(html, new RegExp(`data-cta="${id}"`), `${locale}: CTA ${id} в prep`);
       assert.ok(!html.includes(`>${t.cta[id]}<`), `${locale}: подпись «${t.cta[id]}» в prep`);

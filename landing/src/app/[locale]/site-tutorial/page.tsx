@@ -1,3 +1,4 @@
+import { MediaShowcase } from '../../../components/MediaShowcase';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { Faq } from '../../../components/Faq';
@@ -174,6 +175,7 @@ export default async function SiteTutorialLandingPage({
             </div>
           </div>
         </section>
+        <MediaShowcase locale={locale} product="tutorial" />
 
         {/* Самая важная секция для этой аудитории (§5 п.2 ТЗ): она
             технически подкована и не купится на абстрактную анимацию —

@@ -35,7 +35,7 @@ import {
  * статическая) — у них ссылка на `#demo` главной, где без роликов стоит
  * текст со ссылкой на шаги.
  */
-export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary; locale: Locale; demoHref?: '#demo' | '#how' }) {
+export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary; locale: Locale; demoHref?: '#demo' | '#how' | '#watch' }) {
   const assistLocale = ['ru', 'uk', 'en'].includes(locale) ? locale : 'en';
   const assistLanguageNote = assistLocale === locale ? '' : ' (EN)';
   return (
