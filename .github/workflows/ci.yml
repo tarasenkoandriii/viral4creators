@@ -588,7 +588,14 @@ jobs:
         working-directory: widget
       # Chromium для axe и e2e — той же версии, что playwright-core в devDeps.
       - name: Chromium для axe
-        run: npx playwright-core install --with-deps chromium
+        run: |
+          # The runner's Azure HTTP mirror can stall apt for many minutes.
+          # Keep Ubuntu's signed packages, using its official HTTPS archive.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            echo 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
+          fi
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/80-ci-network
+          npx playwright-core install --with-deps chromium
         working-directory: sites-landing
       - name: стенд продукта и сайт
         run: |
