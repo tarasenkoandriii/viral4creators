@@ -892,8 +892,8 @@
           },
           {
             "claim": "voice",
-            "q": "Will there be voice?",
-            "a": "Yes, on the Business and Pro plans — in the stages after the first version."
+            "q": "Are voice conversation and control available?",
+            "a": "Voice conversation and control are in a limited pilot. General availability depends on device and workflow validation; access and action boundaries are agreed before setup."
           }
         ]
       },
@@ -1386,7 +1386,7 @@
     ],
     "pilot": "Pilot on your website",
     "demo": "Open the test sandbox",
-    "limits": "Voice features are under pilot validation. HTTPS, microphone permission and a supported browser are required. Hands-free requires explicit opt-in; Stop ends the session. Acceptance across phones, Telegram, noise and echo is still pending. Streaming is not enabled for all users.",
+    "limits": "Voice features are available as a pilot. HTTPS, microphone permission and a supported browser are required. Hands-free needs a separate opt-in; Stop ends the session. We will check your chosen workflow on your phone, in Telegram and under noise or echo. Continuous speech recognition is not available to all users yet.",
     "boundaries": "Control boundaries",
     "safety": "The assistant does not receive unrestricted control of a website. Only agreed pages and workflows; no bypassing sign-in, protections or confirmations. Do not enter personal data in the demonstration.",
     "task": "Describe the task, language and device",
@@ -1399,7 +1399,7 @@
     "qaCta": "Discuss a website review",
     "beta": "Beta: test forms, lists and mock APIs",
     "betaText": "The prepared sandbox supports safe workflow testing. The test-stand generator is limited to forms, lists and mock APIs; it does not reproduce arbitrary websites or prove complete coverage.",
-    "contactUnavailable": "The pilot form is not connected to a recipient yet. Contact the company page with your website, task, language and device. Form data is not being sent.",
+    "contactUnavailable": "To discuss a pilot, contact the company page. Include your website, task, language and device so we can assess a suitable workflow.",
     "contactDirect": "Contact us on LinkedIn"
   }
 }

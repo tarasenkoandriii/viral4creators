@@ -58,7 +58,7 @@ export const PAGES: readonly PageDef[] = [
   { key: 'hands-free', path: '/hands-free', updated: '2026-10-22', parent: 'home', og: 'assistant' },
   { key: 'qa', path: '/qa', updated: '2026-10-22', parent: 'home', og: 'assistant' },
   { key: 'home', path: '', updated: '2026-10-22' },
-  { key: 'assistant', path: '/assistant', updated: '2026-10-02', parent: 'home' },
+  { key: 'assistant', path: '/assistant', updated: '2026-10-22', parent: 'home' },
   { key: 'how-it-works', path: '/assistant/how-it-works', updated: '2026-10-02', parent: 'assistant' },
   { key: 'widget', path: '/assistant/widget', updated: '2026-10-02', parent: 'assistant' },
   { key: 'try', path: '/assistant/try', updated: '2026-10-02', parent: 'assistant' },
@@ -77,7 +77,7 @@ export const PAGES: readonly PageDef[] = [
   { key: 'bot', path: '/assistant/bot', updated: '2026-10-02', parent: 'assistant' },
   { key: 'security', path: '/assistant/security', updated: '2026-10-02', parent: 'assistant' },
   { key: 'pricing', path: '/assistant/pricing', updated: '2026-10-02', parent: 'assistant' },
-  { key: 'faq', path: '/assistant/faq', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'faq', path: '/assistant/faq', updated: '2026-10-22', parent: 'assistant' },
   { key: 'pilot', path: '/assistant/pilot', updated: '2026-10-02', parent: 'assistant' },
 ];
 

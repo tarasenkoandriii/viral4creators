@@ -4,7 +4,7 @@ import { ClaimCard, visibleClaims } from '../../../components/Claim';
 import { Faq } from '../../../components/Faq';
 import { JsonLd } from '../../../components/JsonLd';
 import { SiteChrome, StatusBanner } from '../../../components/SiteChrome';
-import { BRAND, BRAND_IS_PLACEHOLDER, brandDisplayName } from '../../../brand';
+import { BRAND, BRAND_IS_PLACEHOLDER, brandDisplayName, PRODUCT_LINKS } from '../../../brand';
 import { heroVariant, isVisible } from '../../../lib/claims';
 import { liveWidgetTag } from '../../../lib/live-widget';
 import { WidgetPlayground } from '../../../components/WidgetPlayground';
@@ -99,12 +99,11 @@ export default async function AssistantPage({ params }: { params: Promise<{ loca
             title={a.recording.heading}
             text={a.recording.text}
           />
-          <figure className="recording">
-            <div className="recording-frame" role="img" aria-label={a.recording.placeholder}>
-              <span>{a.recording.placeholder}</span>
-            </div>
-            <figcaption>{a.recording.caption}</figcaption>
-          </figure>
+          <p>{a.recording.caption}</p>
+          <p className="actions">
+            {sandbox && <a className="button" href={PRODUCT_LINKS.sandbox}>{dict.voiceLanding.demo}</a>}
+            <a className="button button-secondary" href={href(locale, 'hands-free')}>{dict.voiceLanding.nav}</a>
+          </p>
         </section>
       )}
 
