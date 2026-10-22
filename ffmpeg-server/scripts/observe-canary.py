@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only, bounded 25-hour observation of synthetic canary operations."""
 import json
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import time
@@ -8,6 +9,29 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path('/opt/v4c-ffmpeg-canary')
+
+
+def ttl_verdict(jobs, now):
+    """Verify public expiry semantics; never equate missing history with cleanup."""
+    counts = {'passed': 0, 'waiting': 0, 'failed': 0}
+    for job in jobs:
+        try:
+            expiry = datetime.fromisoformat(job['expiresAt'].replace('Z', '+00:00')).timestamp()
+        except (KeyError, AttributeError, TypeError, ValueError):
+            counts['failed'] += 1
+            continue
+        if now < expiry + 300:
+            counts['waiting'] += 1
+        elif (job.get('http') == 200 and job.get('status') == 'failed'
+              and job.get('errorCode') == 'OUTPUT_EXPIRED'
+              and job.get('executionStatus') == 'succeeded' and job.get('files') == 0):
+            counts['passed'] += 1
+        else:
+            counts['failed'] += 1
+    verdict = ('failed' if counts['failed'] else 'waiting'
+               if counts['waiting'] or not jobs else 'passed')
+    return {'publicExpiry': verdict, **counts,
+            'physicalDeletionAndIdempotency': 'requires_separate_verification'}
 
 
 def main():
@@ -51,12 +75,15 @@ def main():
             # Do not persist output URLs, signatures, commands or credentials.
             jobs.append({'id': job_id, 'http': status, 'status': job.get('status'),
                          'errorCode': job.get('error_code'),
+                         'executionStatus': job.get('execution_status'),
                          'expiresAt': job.get('expires_at'),
                          'files': len(job.get('output_files', {}))})
         row['jobs'] = jobs
+        row['ttl'] = ttl_verdict(jobs, now)
     except Exception as error:
         # Avoid logging an exception message that could contain request details.
         row['errorType'] = type(error).__name__
+        row['ttl'] = {'publicExpiry': 'unavailable'}
 
     log = ROOT / 'observation.jsonl'
     lines = log.read_text().splitlines()[-299:] if log.exists() else []

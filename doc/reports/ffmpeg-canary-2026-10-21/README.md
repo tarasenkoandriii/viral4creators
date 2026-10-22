@@ -253,3 +253,9 @@ Pinned Linux regression: **396/396 tests, 15/15 suites**, including the generate
 Live original-source test `17534fb3-743d-4bdb-a0b0-db4674e788cc` accepted both `-t 2.2666666666666666` and matching `atrim`; succeeded once. Repeating the same idempotency key returned the same job. MP4: 141509 bytes, SHA-256 `fa3c7512a35fc64438a6440425bbdc3f8d99f93467e7f083109c9ad6de592cdf`, H.264 640×360/24 fps, video 2.291667 s, AAC 2.266984 s (within one video frame). No external paid call was made by this smoke test. Own server remains primary; hosted fallback remains enabled. The three earlier completed hosted jobs were not resubmitted. Their aggregate platform-ledger estimate is $0.03 of the $1 budget, not a verified provider invoice.
 
 The owner waived the pre-switch 24-hour waiting period; TTL observation and always-on off-host backup remain separate operational follow-ups, not prerequisites that silently disable primary routing.
+
+### TTL observation verdict — 22 October
+
+The read-only observer now emits public-expiry `passed/waiting/failed` after a five-minute cleanup grace. It requires retained HTTP 200 history, OUTPUT_EXPIRED, successful execution history, and zero public output links. Missing history, malformed expiry, retained links, and empty samples cannot produce a pass. Physical deletion and idempotency tombstones remain explicitly unverified by this public-API observation.
+
+13 Python ops tests passed (5 observer + 8 backup tests). Updated script installed in place without restarting API/executor or changing the observation deadline. Live result: health 200, ready/active, 23 waiting, 0 failed; no paid calls or new renders. Existing backup restored into an isolated local SQLite database with integrity OK, 30 jobs and 30 idempotency records; production database untouched.
