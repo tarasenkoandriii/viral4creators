@@ -13,10 +13,10 @@
     "budget:js": "node scripts/first-load-js.mjs"
   },
   "dependencies": {
-    "next": "^15.5.27",
+    "next": "^15.5.28",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "sanitize-html": "2.18.0"
+    "sanitize-html": "2.18.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
