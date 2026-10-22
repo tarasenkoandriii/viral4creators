@@ -115,8 +115,11 @@ it('U-01: проводка — App пускает readonly в мастер, ма
   like(src('App.tsx'), /storyView === 'allowed' \|\| storyView === 'readonly'/);
   const screen = src('features/stories/StoryGiftsScreen.tsx');
   like(screen, /const readOnly = storyAccess\.access\?\.readOnly === true/);
-  like(screen, /\{!readOnly && catalog\.length > 0 && \(/);
-  like(screen, /\{!readOnly && story && \(/);
+  like(
+    screen,
+    /\{!readOnly && storySource === 'library' && catalog\.length > 0 && \(/
+  );
+  like(screen, /\{!readOnly && storySource === 'library' && story && \(/);
   like(screen, /\{!readOnly && selected\.status === 'DRAFT' && \(/);
   like(screen, /\{!readOnly && selected\.status === 'READY' && \(/);
   like(
@@ -404,8 +407,14 @@ it('U-05: ошибки сервера — по коду на языке инте
 });
 it('U-07: разбор референсов, реестр редакций и образ рассказчика — только владельцу', () => {
   const screen = src('features/stories/StoryGiftsScreen.tsx');
-  like(screen, /\{owner && !readOnly && <StoryReferencesPanel \/>\}/);
-  like(screen, /\{owner && !readOnly && <StoryEditionsPanel \/>\}/);
+  like(
+    screen,
+    /\{owner && !readOnly && youtubeOpened && \([\s\S]{0,100}<StoryReferencesPanel \/>/
+  );
+  like(
+    screen,
+    /\{owner && !readOnly && storySource === 'library' && \([\s\S]{0,250}<StoryEditionsPanel \/>/
+  );
   like(
     src('features/stories/StoryVideoPanel.tsx'),
     /\{owner && profileId && \(/

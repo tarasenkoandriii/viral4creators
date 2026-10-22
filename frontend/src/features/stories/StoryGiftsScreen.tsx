@@ -420,6 +420,10 @@ export function StoryGiftsScreen() {
   /** Текст ошибки: валидатор обещаний — на языке интерфейса по коду. */
   const failText = (e: unknown) =>
     storyPromiseText(storyCode(e), errText(e), t);
+  const [storySource, setStorySource] = useState<'library' | 'youtube'>(
+    'library'
+  );
+  const [youtubeOpened, setYoutubeOpened] = useState(false);
   const [catalog, setCatalog] = useState<Story[]>([]),
     [gifts, setGifts] = useState<Gift[]>([]),
     [selected, setSelected] = useState<Gift | null>(null);
@@ -725,10 +729,55 @@ export function StoryGiftsScreen() {
         </p>
       )}
       <StoryCreditsNotice info={credits} />
-      {/* ST3-U-07: разбор референсов и реестр редакций — инструменты владельца. */}
-      {owner && !readOnly && <StoryReferencesPanel />}
-      {owner && !readOnly && <StoryEditionsPanel />}
-      {!readOnly && catalog.length > 0 && (
+      {!readOnly && (
+        <Card className="space-y-3 p-5">
+          <h2 className="text-xl font-semibold">{w.sourceTitle}</h2>
+          <div
+            className="flex flex-wrap gap-2"
+            role="group"
+            aria-label={w.sourceTitle}
+          >
+            <Button
+              variant={storySource === 'library' ? 'solid' : 'outline'}
+              aria-pressed={storySource === 'library'}
+              disabled={busy || photoBusy}
+              onClick={() => setStorySource('library')}
+            >
+              {w.sourceLibrary}
+            </Button>
+            {owner && (
+              <Button
+                variant={storySource === 'youtube' ? 'solid' : 'outline'}
+                aria-pressed={storySource === 'youtube'}
+                disabled={busy || photoBusy}
+                onClick={() => {
+                  setYoutubeOpened(true);
+                  setStorySource('youtube');
+                }}
+              >
+                {w.sourceYoutube}
+              </Button>
+            )}
+          </div>
+          <p>
+            {storySource === 'library'
+              ? w.sourceLibraryHint
+              : w.sourceYoutubeHint}
+          </p>
+        </Card>
+      )}
+      {/* Owner tools load only after an explicit source choice. */}
+      {owner && !readOnly && youtubeOpened && (
+        <div hidden={storySource !== 'youtube'}>
+          <StoryReferencesPanel />
+        </div>
+      )}
+      {!readOnly && storySource === 'library' && catalog.length === 0 && (
+        <Card className="p-5">
+          <p role="status">{w.sourceEmpty}</p>
+        </Card>
+      )}
+      {!readOnly && storySource === 'library' && catalog.length > 0 && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">
             {owner ? w.catalogTitle : w.catalogTitleMember}
@@ -823,7 +872,7 @@ export function StoryGiftsScreen() {
           )}
         </Card>
       )}
-      {!readOnly && story && (
+      {!readOnly && storySource === 'library' && story && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">{story.title}</h2>
           <p className="text-sm text-silver-400">
@@ -1125,6 +1174,14 @@ export function StoryGiftsScreen() {
             {photoBusy ? w.photoPreparing : w.createDraft}
           </Button>
         </Card>
+      )}
+      {owner && !readOnly && storySource === 'library' && (
+        <details className="rounded-xl border border-silver-500/30 p-4">
+          <summary className="cursor-pointer font-semibold">
+            {w.sourceEditions}
+          </summary>
+          <StoryEditionsPanel />
+        </details>
       )}
       {gifts.length > 0 && (
         <Card className="space-y-3 p-5">
