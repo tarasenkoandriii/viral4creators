@@ -22,7 +22,7 @@
  * Сервер: `next start` собранного сайта на :3010. Chrome — `CHROME_PATH`
  * (в песочнице — Chromium Playwright; на раннере GitHub — системный).
  */
-const PATHS = ['/uk', '/uk/assistant', '/en/assistant/pricing', '/ru/assistant/pilot', '/uk/assistant/faq', '/uk/assistant/integrations/wordpress', '/en/docs/assistant'];
+const PATHS = ['/ru/hands-free', '/uk', '/uk/assistant', '/en/assistant/pricing', '/ru/assistant/pilot', '/uk/assistant/faq', '/uk/assistant/integrations/wordpress', '/en/docs/assistant'];
 const WIDGET_PATHS = ['/uk/assistant/widget', '/uk/assistant/try'];
 const BASE = process.env.LHCI_BASE_URL || 'http://localhost:3010';
 

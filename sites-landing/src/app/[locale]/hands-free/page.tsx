@@ -25,8 +25,8 @@ export default async function VoicePage({
   return (
     <SiteChrome locale={locale} path="/hands-free" current="hands-free">
       <Breadcrumbs locale={locale} current="hands-free" />
-      <section className="hero wrap">
-        <p className="eyebrow">Hands-free · Pilot</p>
+      <section className="hero wrap voice-hero">
+        <p className="eyebrow">{c.eyebrow}</p>
         <h1>{c.title}</h1>
         <p className="lead">{c.lead}</p>
         <p className="actions">
@@ -37,6 +37,29 @@ export default async function VoicePage({
             {c.demo}
           </a>
         </p>
+        <p className="voice-proof">{c.proof}</p>
+        <figure className="voice-example">
+          <figcaption>{c.exampleLabel}</figcaption>
+          <h2>{c.exampleTitle}</h2>
+          <blockquote>{c.exampleUser}</blockquote>
+          <p>{c.examplePlan}</p>
+          <div className="voice-assurances">
+            <span>{c.exampleConfirm}</span>
+            <span>{c.exampleStop}</span>
+          </div>
+          <p className="voice-example-note">{c.exampleNote}</p>
+        </figure>
+      </section>
+      <section className="section wrap">
+        <h2>{c.usesTitle}</h2>
+        <div className="grid">
+          {c.uses.map((item) => (
+            <article className="card" key={item.title}>
+              <h3>{item.title}</h3>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
       </section>
       <section className="section section-alt">
         <div className="wrap">
@@ -77,13 +100,30 @@ export default async function VoicePage({
         </div>
       </section>
       <section id="pilot" className="section wrap">
-        <h2>{c.pilot}</h2>
+        <h2>{c.pilotTitle}</h2>
+        <ol className="voice-pilot-steps">
+          {c.pilotSteps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        <p>{c.pilotNote}</p>
         <p>{c.task}</p>
         <PilotContact
           locale={locale}
           strings={{ ...d.pilot.form, message: c.task }}
           privacyHref="/legal/privacy"
         />
+      </section>
+      <section className="section section-alt">
+        <div className="wrap voice-faq">
+          <h2>{c.faqTitle}</h2>
+          {c.faq.map((item) => (
+            <details key={item.q}>
+              <summary>{item.q}</summary>
+              <p>{item.a}</p>
+            </details>
+          ))}
+        </div>
       </section>
     </SiteChrome>
   );

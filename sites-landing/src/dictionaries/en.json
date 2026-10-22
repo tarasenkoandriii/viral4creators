@@ -1400,6 +1400,57 @@
     "beta": "Beta: test forms, lists and mock APIs",
     "betaText": "The prepared sandbox supports safe workflow testing. The test-stand generator is limited to forms, lists and mock APIs; it does not reproduce arbitrary websites or prove complete coverage.",
     "contactUnavailable": "To discuss a pilot, contact @ConscienceUkraine on Telegram. Include your website, task, language and device so we can assess a suitable workflow.",
-    "contactDirect": "Contact us on Telegram"
+    "contactDirect": "Contact us on Telegram",
+    "eyebrow": "Hands-free · limited pilot",
+    "proof": "No app installation · explicit opt-in · action confirmations",
+    "exampleTitle": "Less explaining. One clear next step.",
+    "exampleLabel": "Illustrative workflow — not a recording of the product",
+    "exampleUser": "“Help me request a consultation”",
+    "examplePlan": "Open the form → explain required fields → review the completed form before submitting.",
+    "exampleConfirm": "Submit only after your confirmation",
+    "exampleStop": "Execution can be stopped",
+    "exampleNote": "This illustrates an agreed workflow. The sandbox opens separately; this page does not activate your microphone.",
+    "usesTitle": "Where to start on your website",
+    "uses": [
+      {
+        "title": "Customer support",
+        "text": "Answer from website knowledge and help visitors find the right section instead of a long exchange."
+      },
+      {
+        "title": "Onboarding",
+        "text": "Guide a new user through one configured task with a clear plan."
+      },
+      {
+        "title": "Working without a keyboard",
+        "text": "Test a voice path when typing is inconvenient. Device compatibility is verified during the pilot."
+      }
+    ],
+    "pilotTitle": "One workflow. A measurable outcome.",
+    "pilotSteps": [
+      "Choose one recurring question or task and agree on the pages involved.",
+      "Review website knowledge, permissions and confirmation points.",
+      "Test the chosen device, including microphone denial, interruption and Stop.",
+      "Compare task completion, time and errors with the usual path."
+    ],
+    "pilotNote": "Scope, price, timing and success criteria are agreed after reviewing your task. No guaranteed savings or universal website compatibility.",
+    "faqTitle": "Before you start",
+    "faq": [
+      {
+        "q": "Will the microphone listen all the time?",
+        "a": "This page does not request microphone access. In the product, users enable voice mode; hands-free requires a separate opt-in. Stop ends the session."
+      },
+      {
+        "q": "Can it control any website?",
+        "a": "No. The pilot covers agreed pages and configured workflows. It does not bypass sign-in, protections or confirmations."
+      },
+      {
+        "q": "What is ready, and what needs validation?",
+        "a": "The voice pipeline and session controls exist. Device, language, noise, echo and action correctness must be verified for each client workflow. Continuous streaming is not generally available yet."
+      },
+      {
+        "q": "What should I send?",
+        "a": "Your website, one example task, language and device. Do not send passwords, payment details or customer information."
+      }
+    ]
   }
 }

@@ -23,6 +23,8 @@ const BASE = (process.env.BASE_URL ?? 'http://localhost:3010').replace(/\/$/, ''
 const LOCALES = ['uk', 'en', 'ru'];
 const PLATFORMS = ['html', 'gtm', 'wordpress', 'woocommerce', 'react', 'shopify', 'horoshop', 'tilda'];
 const PATHS = [
+  '/hands-free',
+  '/qa',
   '',
   '/assistant',
   '/assistant/how-it-works',

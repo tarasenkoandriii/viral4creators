@@ -26,6 +26,11 @@ async function run() {
     assert.match(voice, /action="\/api\/pilot"/);
     assert.match(voice, /name="consent"/);
     assert.ok(voice.includes(d.voiceLanding.task));
+    assert.ok(voice.includes(d.voiceLanding.exampleLabel));
+    assert.ok(voice.includes(d.voiceLanding.exampleNote));
+    assert.equal((voice.match(/<details>/g) ?? []).length, 4);
+    assert.ok(voice.includes(d.voiceLanding.pilotNote));
+    assert.ok(!voice.includes("<audio"), "the example must not activate voice");
     assert.ok(qa.includes(d.home.qa.privacy));
     assert.ok(qa.includes(d.home.qa.limits));
     assert.ok(qa.includes(d.voiceLanding.beta));

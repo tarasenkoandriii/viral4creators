@@ -270,6 +270,7 @@ locally except the two Prisma steps that need network (`migrate deploy`,
 
 All supplementary documentation lives in [`doc/`](doc/):
 
+- Hands-free investor update (22 October 2026): [product, evidence, pilot metrics and launch limits](doc/reports/investor-addendum-hands-free-2026-10-22.md).
 - Investor report v3.17 (16 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-16-v3.17.md) and [PDF](doc/reports/investor-report-2026-10-16-v3.17.pdf).
 
 - [`doc/ai-publisher/README.md`](doc/ai-publisher/README.md) — target product **AI Publisher / ai-publisher.org**, audited v2.2 specification, acceptance and staged integration roadmap; target requirements, not completed pilot results.
