@@ -39,8 +39,14 @@ if [ "$#" -eq 0 ]; then
 fi
 
 base="${VERCEL_GIT_PREVIOUS_SHA:-}"
+if [ -z "$base" ]; then
+  [ -n "${VERCEL_GIT_COMMIT_REF:-}" ] && ref_known=yes || ref_known=no
+  git remote 2>/dev/null | awk '$0 == "origin" { found = 1 } END { exit !found }' && origin_known=yes || origin_known=no
+  echo "vercel-ignore-build: env=${VERCEL_ENV:-unknown}, branch-known=$ref_known, origin-known=$origin_known"
+fi
 if [ -z "$base" ] && [ "${VERCEL_ENV:-}" = "preview" ] && [ -n "${VERCEL_GIT_COMMIT_REF:-}" ]; then
   default_ref="$(git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=10 ls-remote --symref origin HEAD 2>/dev/null | awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')"
+  [ -n "$default_ref" ] && echo "vercel-ignore-build: default branch найдена" || echo "vercel-ignore-build: default branch недоступна"
   case "$default_ref" in
     refs/heads/*)
       if git check-ref-format "$default_ref" >/dev/null 2>&1 &&
