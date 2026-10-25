@@ -159,6 +159,10 @@ module.exports = (phase) => {
   return {
     env,
     reactStrictMode: true,
+    // Small global stylesheet: remove its blocking first-visit request.
+    // Next's experimental flag duplicates CSS in HTML; returning visits trade
+    // separate stylesheet caching for a faster initial render. No CSP changes.
+    experimental: { inlineCss: true },
     poweredByHeader: false,
     async headers() {
       return [

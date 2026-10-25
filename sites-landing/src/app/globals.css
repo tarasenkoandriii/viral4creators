@@ -1740,3 +1740,13 @@ thead th {
 .hero { position:relative; border-bottom:3px solid var(--accent); background:linear-gradient(135deg,var(--banner-bg),var(--bg) 75%); border-radius:0 0 28px 28px; }
 .card { border-top:3px solid var(--accent); }
 .section-alt { background-image:linear-gradient(135deg,var(--banner-bg),var(--surface) 65%); }
+
+/* Long brochure pages: keep the hero eager; defer distant sections only.
+   Auto retains find-in-page/focus/AX content; remember rendered block sizes. */
+.voice-hero ~ .section,
+.voice-hero ~ .media-section,
+.hero[data-hero-variant] ~ .section,
+.hero[data-hero-variant] ~ .media-section {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 40rem;
+}

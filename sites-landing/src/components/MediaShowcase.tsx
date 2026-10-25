@@ -61,7 +61,7 @@ export function MediaShowcase({
       ? [
           {
             src: "/media/voice-concept.mp4",
-            poster: "/media/voice-concept.jpg",
+            poster: "/media/voice-concept.webp",
             title: t.voice,
             description: t.voiceNote,
           },
