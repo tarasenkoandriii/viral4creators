@@ -24,7 +24,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
   const qaLive = claimStatus('qa-product') === 'live';
   return (
     <SiteChrome locale={locale} path="" current="home">
-      <section className="hero wrap">
+      <section className="hero wrap home-hero">
         <h1>{fmt(h.hero.title)}</h1>
         <p className="lead">{fmt(h.hero.lead)}</p>
         <p className="actions">

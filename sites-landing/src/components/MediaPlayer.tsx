@@ -3,6 +3,7 @@ import { useState } from "react";
 export type Film = {
   src: string;
   poster: string;
+  posterAvif?: string;
   title: string;
   description: string;
 };
@@ -36,6 +37,8 @@ export function MediaPlayer({ items, play }: { items: Film[]; play: string }) {
                 onClick={() => setActive(item.src)}
                 aria-label={`${play}: ${item.title}`}
               >
+                <picture>
+                {item.posterAvif && <source srcSet={item.posterAvif} type="image/avif" />}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={item.poster}
@@ -45,6 +48,7 @@ export function MediaPlayer({ items, play }: { items: Film[]; play: string }) {
                   width="960"
                   height="540"
                 />
+                </picture>
                 <span className="media-play">{play}</span>
               </button>
             )}
