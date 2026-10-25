@@ -279,6 +279,7 @@ export class PlatformAdmin {
         chatPaused: true,
         operatorBlockedAt: true,
         dailyCapMicroUsd: true,
+        voiceDailyCapMicroUsd: true,
         widgetVersion: true,
         site: {
           select: {
@@ -348,6 +349,10 @@ export class PlatformAdmin {
         dailyCapUsd:
           s.dailyCapMicroUsd === null ? null : s.dailyCapMicroUsd / MICRO,
         widgetVersion: s.widgetVersion,
+        voiceDailyCapUsd:
+          s.voiceDailyCapMicroUsd === null
+            ? null
+            : s.voiceDailyCapMicroUsd / MICRO,
         hosts: s.site.hosts.map((h) => ({
           host: h.host,
           status: h.status,
@@ -449,6 +454,7 @@ export class PlatformAdmin {
     body: {
       blocked?: boolean;
       dailyCapUsd?: number | null;
+      voiceDailyCapUsd?: number | null;
       /** Э6-бис (г), решение владельца п.2: потолок планов голосового управления в сутки. */
       voiceControlPlansPerDay?: number | null;
     },
@@ -469,10 +475,15 @@ export class PlatformAdmin {
     }
     if (body.voiceControlPlansPerDay !== undefined)
       data.voiceControlPlansPerDay = body.voiceControlPlansPerDay;
+    if (body.voiceDailyCapUsd !== undefined)
+      data.voiceDailyCapMicroUsd =
+        body.voiceDailyCapUsd === null
+          ? null
+          : Math.round(body.voiceDailyCapUsd * MICRO);
     await this.prisma.assistSite.update({ where: { siteId }, data });
     await this.log(
       actor,
-      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : body.voiceControlPlansPerDay !== undefined ? `vc-plans:${body.voiceControlPlansPerDay ?? 'plan'}` : 'cap'}`,
+      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : body.voiceControlPlansPerDay !== undefined ? `vc-plans:${body.voiceControlPlansPerDay ?? 'plan'}` : body.voiceDailyCapUsd !== undefined ? 'voice-cap' : 'cap'}`,
       siteId,
     );
     return this.account(row.accountId, actor);

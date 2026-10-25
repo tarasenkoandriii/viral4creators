@@ -59,7 +59,9 @@ export function effectiveStatus(
 }
 
 function parseMethod(v: string | null): VerifyMethod | null {
-  return v === 'dns' || v === 'file' || v === 'meta' ? v : null;
+  return v === 'dns' || v === 'file' || v === 'meta' || v === 'header'
+    ? v
+    : null;
 }
 
 function parseCheck(v: unknown): HostCheckView | null {

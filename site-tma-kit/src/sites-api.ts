@@ -190,6 +190,14 @@ export function parseInstruction(
     const content = s('content');
     return url && content ? { method, url, content } : null;
   }
+  if (method === 'header') {
+    const pageUrl = s('pageUrl'),
+      name = s('name'),
+      value = s('value');
+    return pageUrl && name === 'x-v4c-verify' && value
+      ? { method, pageUrl, name, value }
+      : null;
+  }
   const pageUrl = s('pageUrl');
   const tag = s('tag');
   return pageUrl && tag ? { method, pageUrl, tag } : null;

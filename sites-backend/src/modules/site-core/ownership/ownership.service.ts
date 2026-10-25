@@ -18,7 +18,11 @@ import {
   verifyTxtValue,
 } from '../../../brand';
 import type { AccountMembership } from '../account/roles';
-import { HostAddress, hostOrigin } from '../hosts/host-normalize';
+import {
+  HostAddress,
+  hostOrigin,
+  isVercelProjectHost,
+} from '../hosts/host-normalize';
 import {
   OWNERSHIP_TTL_MS,
   VerifyMethod,
@@ -47,7 +51,8 @@ export interface VerifyOutcome {
 export type Instruction =
   | { method: 'dns'; recordType: 'TXT'; name: string; value: string }
   | { method: 'file'; url: string; content: string }
-  | { method: 'meta'; pageUrl: string; tag: string };
+  | { method: 'meta'; pageUrl: string; tag: string }
+  | { method: 'header'; pageUrl: string; name: string; value: string };
 
 export function buildInstruction(
   method: VerifyMethod,
@@ -67,6 +72,13 @@ export function buildInstruction(
         method,
         url: `${hostOrigin(host)}${VERIFY_FILE_PATH}`,
         content: token,
+      };
+    case 'header':
+      return {
+        method,
+        pageUrl: `${hostOrigin(host)}/`,
+        name: 'x-v4c-verify',
+        value: token,
       };
     case 'meta':
       return {
@@ -142,7 +154,8 @@ export class OwnershipService {
 
   /** Способ, допустимый для хоста: публичные платформы — только DNS. */
   private assertMethodAllowed(host: SiteHost, method: VerifyMethod): void {
-    if (host.publicPlatform && method !== 'dns') {
+    if (method === 'header' && isVercelProjectHost(host.host)) return;
+    if (method === 'header' || (host.publicPlatform && method !== 'dns')) {
       throw siteCoreError(
         ConflictException,
         'METHOD_NOT_ALLOWED',
@@ -214,7 +227,18 @@ export class OwnershipService {
     m: AccountMembership,
     host: SiteHost,
   ): Promise<VerifyMethod> {
-    if (host.publicPlatform) return 'dns';
+    if (host.publicPlatform) {
+      const last = await this.db
+        .forAccount(m.accountId)
+        .siteOwnershipChallenge.findFirst({
+          where: { hostId: host.id },
+          orderBy: { createdAt: 'desc' },
+        });
+      return isVercelProjectHost(host.host) &&
+        (last?.method ?? host.method) === 'header'
+        ? 'header'
+        : 'dns';
+    }
     const last = await this.db
       .forAccount(m.accountId)
       .siteOwnershipChallenge.findFirst({

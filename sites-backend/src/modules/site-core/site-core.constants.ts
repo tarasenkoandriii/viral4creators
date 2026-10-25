@@ -55,7 +55,7 @@ export const HOST_STATUSES = [
 ] as const;
 export type HostStatus = (typeof HOST_STATUSES)[number];
 
-export const VERIFY_METHODS = ['dns', 'file', 'meta'] as const;
+export const VERIFY_METHODS = ['dns', 'file', 'meta', 'header'] as const;
 export type VerifyMethod = (typeof VERIFY_METHODS)[number];
 
 /**

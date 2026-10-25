@@ -24,7 +24,11 @@ import {
   verifyTxtName,
   verifyTxtValue,
 } from '../../../brand';
-import { HostAddress, hostOrigin } from '../hosts/host-normalize';
+import {
+  HostAddress,
+  hostOrigin,
+  isVercelProjectHost,
+} from '../hosts/host-normalize';
 import { VERIFY_BODY_LIMIT_BYTES, VerifyMethod } from '../site-core.constants';
 import { DohClient } from './doh.client';
 import {
@@ -249,6 +253,8 @@ export class OwnershipChecker {
         return checkDns(this.doh, host, token);
       case 'file':
         return checkFile(host, token, this.http);
+      case 'header':
+        return checkHeader(host, token, this.http);
       case 'meta':
         return checkMeta(host, token, this.http);
     }
@@ -281,5 +287,35 @@ export class OwnershipChecker {
 
   get httpDeps(): SafeHttpDeps {
     return this.http;
+  }
+}
+
+/** Control of an exact Vercel tenant via a project-level response header.
+ * HTTPS, DNS pinning and same-host redirects use the existing safe transport.
+ * A header on a neighbour/apex never verifies this hostname. */
+export async function checkHeader(
+  host: HostAddress,
+  token: string,
+  deps: SafeHttpDeps = DEFAULT_SAFE_HTTP_DEPS,
+): Promise<CheckResult> {
+  if (
+    !isVercelProjectHost(host.host) ||
+    host.scheme !== 'https' ||
+    host.port !== 443
+  )
+    return result('header', 'TOKEN_MISMATCH', true);
+  try {
+    const { res } = await fetchSameOrigin(`${hostOrigin(host)}/`, deps, {
+      headers: { accept: 'text/html', 'cache-control': 'no-cache' },
+    });
+    const bad = fromStatus('header', res.status);
+    const actual = res.headers.get('x-v4c-verify');
+    await res.body?.cancel().catch(() => undefined);
+    if (bad) return bad;
+    return actual === token
+      ? result('header', 'VERIFIED')
+      : result('header', 'TOKEN_MISMATCH', true);
+  } catch (error) {
+    return fromFetchError('header', error);
   }
 }

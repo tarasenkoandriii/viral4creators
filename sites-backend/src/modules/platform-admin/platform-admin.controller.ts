@@ -161,7 +161,28 @@ export class PlatformAdminController {
     @AdminActor() actor: string,
     @Body() b: unknown,
   ) {
-    const o = body(b, ['blocked', 'dailyCapUsd', 'voiceControlPlansPerDay']);
+    const o = body(b, [
+      'blocked',
+      'dailyCapUsd',
+      'voiceDailyCapUsd',
+      'voiceControlPlansPerDay',
+    ]);
+    if (
+      o.voiceDailyCapUsd !== undefined &&
+      o.voiceDailyCapUsd !== null &&
+      !(
+        typeof o.voiceDailyCapUsd === 'number' &&
+        Number.isFinite(o.voiceDailyCapUsd) &&
+        o.voiceDailyCapUsd >= 0 &&
+        o.voiceDailyCapUsd <= 1000
+      )
+    ) {
+      throw adminError(
+        'BAD_REQUEST',
+        'voiceDailyCapUsd — 0…1000 или null',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     if (
       o.voiceControlPlansPerDay !== undefined &&
       o.voiceControlPlansPerDay !== null &&
@@ -203,6 +224,7 @@ export class PlatformAdminController {
     return this.admin.setSite(id(siteId), actor, {
       blocked: o.blocked as boolean | undefined,
       dailyCapUsd: o.dailyCapUsd as number | null | undefined,
+      voiceDailyCapUsd: o.voiceDailyCapUsd as number | null | undefined,
       voiceControlPlansPerDay: o.voiceControlPlansPerDay as
         number | null | undefined,
     });

@@ -178,11 +178,14 @@ export const en: Dictionary = {
       'Choose a method. Verification lasts 90 days and is shared by all our services for this workspace.',
     tokenLabel: 'Workspace token',
     methods: {
+      header: 'Vercel response header',
       dns: 'DNS TXT record',
       file: 'File on the site',
       meta: 'Meta tag on the home page',
     },
     methodHints: {
+      header:
+        'Vercel → CDN → Routing: add x-v4c-verify to responses for the exact production hostname and / path only. No repository edit. Keep the rule for periodic rechecks.',
       dns: 'The main method. Works for any host.',
       file: 'Host root only.',
       meta: 'Host home page only.',
