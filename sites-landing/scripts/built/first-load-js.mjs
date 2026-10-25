@@ -11,9 +11,9 @@
  * `rootMainFiles` (рантайм Next + React) ∪ чанки корневого layout ∪
  * чанки layout'ов-предков ∪ чанк страницы (`app-build-manifest.json`).
  * `polyfills` (nomodule) современные браузеры не грузят — не в счёт.
- * Ленивые чанки (`web-vitals` после гидратации) — тоже не в счёт: они не
- * часть первой загрузки, и это проверяется отдельно — его модуль не должен
- * оказаться в начальных чанках.
+ * Ленивые чанки не входят в manifest первой загрузки. web-vitals теперь
+ * включён в документный клиентский пакет и полностью входит в этот бюджет:
+ * отдельный import после гидратации создавал последовательный запрос.
  *
  * «Пустая страница» (§9: «ПРОВЕРИТЬ на пустой странице в Л0») —
  * `rootMainFiles` + корневой layout: столько весит маршрут без единого
@@ -70,13 +70,7 @@ for (const key of Object.keys(app).filter((k) => k.endsWith('/page')).sort()) {
   const over = total > budget * 1024;
   failed ||= over;
   rows.push(`${over ? 'FAIL' : 'ok  '} ${kb(total).padStart(6)} КБ  ${key}${budget !== BUDGET_KB ? ` (бюджет ${budget})` : ''}`);
-  // web-vitals не должен попасть в первую загрузку.
-  for (const f of files) {
-    if (/largest-contentful-paint/.test(fs.readFileSync(path.join(NEXT, f), 'utf8'))) {
-      failed = true;
-      rows.push(`FAIL web-vitals в начальном чанке ${f} (${key})`);
-    }
-  }
+
 }
 console.log(rows.join('\n'));
 console.log(`пустая страница (рантайм Next + React + корневой layout): ${kb(baseline)} КБ gzip; бюджет ${BUDGET_KB} КБ (≈ базовая + ${kb(BUDGET_KB * 1024 - baseline)} КБ)`);
