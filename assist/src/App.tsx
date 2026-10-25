@@ -265,7 +265,16 @@ export function App({ startParam }: { startParam: string | null }) {
   const webAuth = useMemo(() => createWebAuthApi(client), [client]);
   const knowledgeApi = useMemo(() => createKnowledgeApi(client), [client]);
   const widgetApi = useMemo(() => createWidgetApi(client), [client]);
-  const personaApi = useMemo(() => createPersonaApi(client), [client]);
+  // Ten sequential provider checks can exceed the ordinary 30-second request deadline.
+  // Only publication uses the longer deadline; there is no automatic retry.
+  const personaApi = useMemo(
+    () =>
+      createPersonaApi(
+        client,
+        createApiClient({ ...clientOpts, timeoutMs: 240_000 })
+      ),
+    [client, clientOpts]
+  );
   const wizardApi = useMemo(() => createWizardApi(client), [client]);
   const handoffApi = useMemo(() => createHandoffApi(client), [client]);
   const learningApi = useMemo(() => createLearningApi(client), [client]);
