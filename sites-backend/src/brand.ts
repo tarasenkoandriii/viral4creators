@@ -359,3 +359,6 @@ export const PUBLISHER_SECRET_LABELS = {
 export function isPublisherPublicKey(v: unknown): v is string {
   return typeof v === 'string' && PUBLISHER_PUBLIC_KEY_RE.test(v);
 }
+
+/** Public ownership proof response header for exact Vercel project hosts. */
+export const VERIFY_RESPONSE_HEADER = 'x-v4c-verify';

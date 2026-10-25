@@ -1,4 +1,5 @@
 /* СГЕНЕРИРОВАНО scripts/sync-site-tma-kit.mjs — не править. Источник: site-tma-kit/src/dictionaries/en.ts */
+import { VERIFY_RESPONSE_HEADER } from '../brand';
 import type { Dictionary } from './ru';
 
 /** Cabinet dictionary — English. Same keys as ru.ts. */
@@ -185,7 +186,7 @@ export const en: Dictionary = {
     },
     methodHints: {
       header:
-        'Vercel → CDN → Routing: add x-v4c-verify to responses for the exact production hostname and / path only. No repository edit. Keep the rule for periodic rechecks.',
+        `Vercel → CDN → Routing: add ${VERIFY_RESPONSE_HEADER} to responses for the exact production hostname and / path only. No repository edit. Keep the rule for periodic rechecks.`,
       dns: 'The main method. Works for any host.',
       file: 'Host root only.',
       meta: 'Host home page only.',

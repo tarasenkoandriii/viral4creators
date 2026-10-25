@@ -1,3 +1,4 @@
+import { VERIFY_RESPONSE_HEADER } from '../brand';
 import type { Dictionary } from './ru';
 
 /** Словник кабінету — українська. Ключі — ті самі, що в ru.ts. */
@@ -187,7 +188,7 @@ export const uk: Dictionary = {
     },
     methodHints: {
       header:
-        'Vercel → CDN → Routing: додайте заголовок відповіді x-v4c-verify лише для точного production-хоста та шляху /. Правило перевіряється повторно.',
+        `Vercel → CDN → Routing: додайте заголовок відповіді ${VERIFY_RESPONSE_HEADER} лише для точного production-хоста та шляху /. Правило перевіряється повторно.`,
       dns: 'Основний спосіб. Підходить для будь-якого хоста.',
       file: 'Лише корінь хоста.',
       meta: 'Лише головна сторінка хоста.',

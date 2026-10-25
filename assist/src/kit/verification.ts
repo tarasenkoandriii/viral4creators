@@ -1,4 +1,5 @@
 /* СГЕНЕРИРОВАНО scripts/sync-site-tma-kit.mjs — не править. Источник: site-tma-kit/src/verification.ts */
+import { VERIFY_RESPONSE_HEADER } from './brand';
 /**
  * Подтверждение владения хостом: инструкции и разбор статусов.
  *
@@ -87,7 +88,7 @@ export function buildInstruction(
       return {
         method,
         pageUrl: `${origin}/`,
-        name: 'x-v4c-verify',
+        name: VERIFY_RESPONSE_HEADER,
         value: token,
       };
     case 'meta':

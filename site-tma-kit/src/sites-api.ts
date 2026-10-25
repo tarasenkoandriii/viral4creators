@@ -1,3 +1,4 @@
+import { VERIFY_RESPONSE_HEADER } from './brand';
 /**
  * Маршруты ядра `site-core` — дословно ТЗ помощника §4.16 /
  * `TZ-QA-TMA.md` §4.8 (принимают initData любого из двух ботов).
@@ -194,7 +195,7 @@ export function parseInstruction(
     const pageUrl = s('pageUrl'),
       name = s('name'),
       value = s('value');
-    return pageUrl && name === 'x-v4c-verify' && value
+    return pageUrl && name === VERIFY_RESPONSE_HEADER && value
       ? { method, pageUrl, name, value }
       : null;
   }

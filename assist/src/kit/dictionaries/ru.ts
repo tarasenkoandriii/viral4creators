@@ -1,4 +1,5 @@
 /* СГЕНЕРИРОВАНО scripts/sync-site-tma-kit.mjs — не править. Источник: site-tma-kit/src/dictionaries/ru.ts */
+import { VERIFY_RESPONSE_HEADER } from '../brand';
 /**
  * Словарь кабинета — русский. Источник типа `Dictionary`: uk и en обязаны
  * иметь ровно те же ключи (проверяет tsc и скрипт `i18n.test.ts`).
@@ -189,7 +190,7 @@ export const ru = {
     },
     methodHints: {
       header:
-        'Vercel → CDN → Routing: добавьте ответный заголовок x-v4c-verify только для точного production-хоста и пути /. Репозиторий менять не нужно. Не удаляйте правило: оно перепроверяется.',
+        `Vercel → CDN → Routing: добавьте ответный заголовок ${VERIFY_RESPONSE_HEADER} только для точного production-хоста и пути /. Репозиторий менять не нужно. Не удаляйте правило: оно перепроверяется.`,
       dns: 'Основной способ. Подходит для любого хоста.',
       file: 'Только корень хоста.',
       meta: 'Только главная страница хоста.',

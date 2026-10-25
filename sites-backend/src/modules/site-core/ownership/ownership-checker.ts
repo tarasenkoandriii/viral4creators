@@ -1,3 +1,4 @@
+import { VERIFY_RESPONSE_HEADER } from '../../../brand';
 /**
  * Сама проверка владения хостом — тремя способами QA-ТЗ §2.4 (ТЗ
  * помощника §3.3). Ничего не пишет в базу: только «нашли наш токен или
@@ -309,7 +310,7 @@ export async function checkHeader(
       headers: { accept: 'text/html', 'cache-control': 'no-cache' },
     });
     const bad = fromStatus('header', res.status);
-    const actual = res.headers.get('x-v4c-verify');
+    const actual = res.headers.get(VERIFY_RESPONSE_HEADER);
     await res.body?.cancel().catch(() => undefined);
     if (bad) return bad;
     return actual === token

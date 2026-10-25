@@ -1,3 +1,4 @@
+import { VERIFY_RESPONSE_HEADER } from '../../../brand';
 /**
  * Подтверждение владения хостом: выдача инструкции, проверка, пакетная
  * проверка, чужие авторизации и их отзыв (ТЗ помощника §3.3, §4.16; QA-ТЗ
@@ -77,7 +78,7 @@ export function buildInstruction(
       return {
         method,
         pageUrl: `${hostOrigin(host)}/`,
-        name: 'x-v4c-verify',
+        name: VERIFY_RESPONSE_HEADER,
         value: token,
       };
     case 'meta':

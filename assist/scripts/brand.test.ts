@@ -46,6 +46,7 @@ if (existsSync(backend)) {
     VERIFY_TXT_KEY: brand.VERIFY_TXT_KEY,
     VERIFY_FILE_PATH: brand.VERIFY_FILE_PATH,
     VERIFY_META_NAME: brand.VERIFY_META_NAME,
+    VERIFY_RESPONSE_HEADER: brand.VERIFY_RESPONSE_HEADER,
     TELEGRAM_APP_HEADER: brand.TELEGRAM_APP_HEADER,
   };
   for (const [name, value] of Object.entries(MIRRORED)) {
