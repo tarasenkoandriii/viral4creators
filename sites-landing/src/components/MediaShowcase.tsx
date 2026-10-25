@@ -62,6 +62,7 @@ export function MediaShowcase({
           {
             src: "/media/voice-concept.mp4",
             poster: "/media/voice-concept.webp",
+            posterAvif: "/media/voice-concept.avif",
             title: t.voice,
             description: t.voiceNote,
           },
