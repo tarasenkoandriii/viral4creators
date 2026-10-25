@@ -27,3 +27,9 @@ Client integration remains disabled in the separate Raffle repository and was no
 Keep CSP and add https://assist-w.viral4creators.app to script-src/frame-src/connect-src and applicable image sources. Preserve nonce/strict-dynamic, without adding unsafe-inline. Microphone delegation: `Permissions-Policy: microphone=(self "https://assist-w.viral4creators.app")`; loader iframe uses `allow="microphone"`. Every enclosing iframe must delegate; browser permission still requires a user gesture.
 
 Remaining acceptance: actual Raffle embedding/mobile overlap and physical iOS/Android/Telegram microphone, Stop/close, permission revocation, Bluetooth and calls. API/synthetic/browser-mock results are not hardware acceptance. Nova, accepted media and other client configuration are unchanged.
+
+## Supervised frontend test — follow-up 25.10.2026
+
+User explicitly lifted the no-edit boundary for a temporary test only. Raffle commit 1df00ff is deployed and Vercel status is successful. Public enabled remains false; `?assistant-test=1` exposes a user-click button until 2026-10-26 00:00 UTC. This is discoverability, not authentication. Server-side spend caps bound the supervised test and were restored to zero. 48 suites / 406 tests and production build passed.
+
+In the actual production Raffle page, verified no pre-click widget resources, English grounded TON Testnet answer, read-aloud control and Stop return to idle, close, financial-route removal, and no widget on ordinary visits. Mobile viewport390×844 checked; no physical microphone recording or device/speaker quality claim. Correct microphone Permissions-Policy is served. Public config can cache lead_only/active for300seconds after caps change; server-side caps still enforce spend. Cumulative ledger is now $0.100822/$0.70, final chat/voice caps0, other site caps unchanged. See frontend-acceptance.json.

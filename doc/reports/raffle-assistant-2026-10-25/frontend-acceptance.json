@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-25",
+  "frontendCommit": "1df00ff9fc8453fed2f63f585133ef0bdddb6f88",
+  "deployment": "dpl_EZo1nHRE1PvWxzVwis8Px3ArrUxJ",
+  "status": "READY",
+  "publicEnabled": false,
+  "testQuery": "assistant-test=1",
+  "testUntilUtc": "2026-10-26T00:00:00Z",
+  "tests": {
+    "suites": 48,
+    "passed": 406,
+    "productionBuild": "passed",
+    "vercelCommitStatus": "success"
+  },
+  "browser": [
+    "exact production origin: loader absent before click",
+    "widget opened via explicit click",
+    "English grounded TON Testnet response from own FAQ",
+    "read-aloud toggled and Stop returned to idle",
+    "390x844 viewport: fullscreen widget with close control",
+    "close removed visible chat",
+    "financial route removed loader and iframe",
+    "ordinary visit: no helper button or widget resources"
+  ],
+  "limitations": [
+    "No physical microphone recording or iOS/Android/Telegram hardware acceptance",
+    "Read-aloud UI and ledger tested; no claim of subjective speaker quality",
+    "Configuration cache may retain lead_only/active display for 300 seconds after quota changes; server caps remain authoritative",
+    "Test query is discoverability, not authentication; expiry checked on render, not forced session termination"
+  ],
+  "platformLedgerTotalUsd": 0.100822,
+  "approvedTotalUsd": 0.7,
+  "finalCaps": {
+    "chat": 0,
+    "voice": 0
+  },
+  "otherSiteCapsUnchanged": true
+}
