@@ -184,8 +184,7 @@ export const en: Dictionary = {
       meta: 'Meta tag on the home page',
     },
     methodHints: {
-      header:
-        `Vercel → CDN → Routing: add ${VERIFY_RESPONSE_HEADER} to responses for the exact production hostname and / path only. No repository edit. Keep the rule for periodic rechecks.`,
+      header: `Vercel → CDN → Routing: add ${VERIFY_RESPONSE_HEADER} to responses for the exact production hostname and / path only. No repository edit. Keep the rule for periodic rechecks.`,
       dns: 'The main method. Works for any host.',
       file: 'Host root only.',
       meta: 'Host home page only.',
