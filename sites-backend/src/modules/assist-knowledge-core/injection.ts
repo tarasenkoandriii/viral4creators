@@ -19,12 +19,33 @@ export interface InjectionVerdict {
 const AI_WORD =
   '(?:ии|ші|ai|a\\.i\\.|llm|gpt|chatgpt|gemini|claude|нейросеть|нейромережа|нейронка|языковая модель|мовна модель|language model|ассистент|асистент|assistant|модель|model|бот|bot|чат-бот|чатбот|chatbot)';
 
+// Keep product model names and ordinary installation instructions outside this rule.
+const AI_INSTRUCTION_TARGET =
+  '(?<![\\p{L}\\p{N}])(?:ии|ші|ai|llm|gpt|chatgpt|gemini|claude)(?![\\p{L}\\p{N}])';
+const AI_INSTRUCTIONS = `(?:инструкци[а-я]*|інструкці[а-яієї]*|instructions?)[^.!?\\n]{0,70}${AI_INSTRUCTION_TARGET}`;
+const EXECUTE_INSTRUCTIONS =
+  '(?<![\\p{L}])(?:выполни(?:те)?|следуй(?:те)?|виконай(?:те)?|дотримуйся|follow|execute|obey|apply)(?![\\p{L}])';
+
 interface Rule {
   id: string;
   re: RegExp;
 }
 
 const RULES: Rule[] = [
+  {
+    id: 'page-ai-instructions',
+    re: new RegExp(
+      `${AI_INSTRUCTIONS}[\\s\\S]{0,160}${EXECUTE_INSTRUCTIONS}`,
+      'iu',
+    ),
+  },
+  {
+    id: 'page-ai-instructions',
+    re: new RegExp(
+      `${EXECUTE_INSTRUCTIONS}[^.!?\\n]{0,100}${AI_INSTRUCTIONS}`,
+      'iu',
+    ),
+  },
   {
     id: 'ignore-instructions',
     re: /\b(?:ignore|disregard|forget|override|bypass)\b[^.!?\n]{0,40}\b(?:instructions?|prompts?|rules|guidelines|directives)\b/iu,
