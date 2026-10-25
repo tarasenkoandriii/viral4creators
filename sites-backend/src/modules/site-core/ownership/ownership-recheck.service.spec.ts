@@ -64,6 +64,30 @@ function setup() {
 }
 
 describe('крон site-ownership-recheck', () => {
+  it('rechecks a Vercel header with its own method and revokes when it disappears', async () => {
+    const { store, net, svc, byId } = setup();
+    store.insert('SiteHost', {
+      id: 'vercel',
+      accountId: 'A',
+      siteId: 'sa',
+      host: 'raffle-fe-next.vercel.app',
+      publicPlatform: true,
+      status: 'verified',
+      method: 'header',
+      verifiedAt: ago(DAY),
+      expiresAt: ahead(89 * DAY),
+    });
+    net.page('https://raffle-fe-next.vercel.app/', {
+      status: 200,
+      headers: { 'x-v4c-verify': 'tokA' },
+    });
+    await svc.run(NOW);
+    expect(byId('vercel').status).toBe('verified');
+    expect(byId('vercel').lastCheck).toMatchObject({ ok: true });
+    net.page('https://raffle-fe-next.vercel.app/', { status: 200 });
+    await svc.run(new Date(NOW.getTime() + DAY));
+    expect(byId('vercel').status).toBe('revoked');
+  });
   it('обновляет статусы: expired по сроку, revoked при пропаже, остальное не трогает', async () => {
     const { svc, byId } = setup();
     const r = await svc.run(NOW);

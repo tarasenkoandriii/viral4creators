@@ -1,4 +1,5 @@
 /* СГЕНЕРИРОВАНО scripts/sync-site-tma-kit.mjs — не править. Источник: site-tma-kit/src/sites-api.ts */
+import { VERIFY_RESPONSE_HEADER } from './brand';
 /**
  * Маршруты ядра `site-core` — дословно ТЗ помощника §4.16 /
  * `TZ-QA-TMA.md` §4.8 (принимают initData любого из двух ботов).
@@ -190,6 +191,14 @@ export function parseInstruction(
     const url = s('url');
     const content = s('content');
     return url && content ? { method, url, content } : null;
+  }
+  if (method === 'header') {
+    const pageUrl = s('pageUrl'),
+      name = s('name'),
+      value = s('value');
+    return pageUrl && name === VERIFY_RESPONSE_HEADER && value
+      ? { method, pageUrl, name, value }
+      : null;
   }
   const pageUrl = s('pageUrl');
   const tag = s('tag');

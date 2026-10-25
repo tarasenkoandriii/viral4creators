@@ -55,3 +55,6 @@ export const PRODUCT_NAMES: Record<
   assist: { uk: 'Помічник', ru: 'Помощник', en: 'Assistant' },
   qa: { uk: 'QA сайтів', ru: 'QA сайтов', en: 'Site QA' },
 };
+
+/** Public ownership proof response header for exact Vercel project hosts. */
+export const VERIFY_RESPONSE_HEADER = 'x-v4c-verify';

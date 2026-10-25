@@ -199,7 +199,11 @@ export function HostVerifyScreen({
           <AccountContextNote />
           <p className="text-sm text-silver-500">{t.intro}</p>
           {methods.length === 1 && (
-            <Alert tone="warning">{t.platformOnlyDns}</Alert>
+            <Alert tone="warning">
+              {methods.includes('header')
+                ? t.methodHints.header
+                : t.platformOnlyDns}
+            </Alert>
           )}
 
           <div role="tablist" className="grid grid-cols-3 gap-2">
@@ -259,6 +263,25 @@ export function HostVerifyScreen({
                 <CopyField
                   label={t.fileContent}
                   value={instruction.content}
+                  {...copy}
+                />
+              </>
+            )}
+            {instruction?.method === 'header' && (
+              <>
+                <CopyField
+                  label={t.metaPage}
+                  value={instruction.pageUrl}
+                  {...copy}
+                />
+                <CopyField
+                  label={t.recordName}
+                  value={instruction.name}
+                  {...copy}
+                />
+                <CopyField
+                  label={t.recordValue}
+                  value={instruction.value}
                   {...copy}
                 />
               </>

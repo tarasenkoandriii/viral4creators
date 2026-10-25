@@ -249,6 +249,26 @@ function AccountsTab() {
   );
 }
 
+function SiteBudgetControls({ site, busy, save }: {
+  site: AssistAccountDetail['sites'][number];
+  busy: boolean;
+  save: (caps: { dailyCapUsd: number | null; voiceDailyCapUsd: number | null }) => void;
+}) {
+  const [chat, setChat] = useState(site.dailyCapUsd === null ? '' : String(site.dailyCapUsd));
+  const [voice, setVoice] = useState(site.voiceDailyCapUsd == null ? '' : String(site.voiceDailyCapUsd));
+  const a = parseCapUsd(chat), b = parseCapUsd(voice);
+  const valid = a.ok && b.ok && (a.value === null || a.value <= 1000) && (b.value === null || b.value <= 1000);
+  return <form onSubmit={(event) => {
+    event.preventDefault();
+    if (valid && a.ok && b.ok) save({ dailyCapUsd: a.value, voiceDailyCapUsd: b.value });
+  }}>
+    <label>Чат · $/сутки · {site.name}<input aria-label={`Чат · $/сутки · ${site.name}`} inputMode="decimal" value={chat} onChange={(e) => setChat(e.target.value)} /></label>
+    <label>Голос · $/сутки · {site.name}<input aria-label={`Голос · $/сутки · ${site.name}`} inputMode="decimal" value={voice} onChange={(e) => setVoice(e.target.value)} /></label>
+    <p className="muted">Пусто — по тарифу; 0 — запрет. Сброс каждый день UTC, не разовый бюджет.</p>
+    <button type="submit" disabled={busy || !valid}>Сохранить лимиты {site.name}</button>
+  </form>;
+}
+
 function AccountPanel({ id }: { id: string }) {
   const [d, setD] = useState<AssistAccountDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -335,6 +355,17 @@ function AccountPanel({ id }: { id: string }) {
                     <td>{s.hosts.map((h) => `${h.host} (${h.status})`).join(', ')}</td>
                     <td>{s.enabled ? 'включён' : 'выключен'}{s.chatPaused ? ', пауза владельца' : ''}</td>
                     <td>потолок/сутки: {s.dailyCapUsd === null ? 'по тарифу' : fmtUsd(s.dailyCapUsd)}</td>
+                    <td>
+                      <SiteBudgetControls
+                        key={`${s.siteId}:${s.dailyCapUsd}:${s.voiceDailyCapUsd}`}
+                        site={s}
+                        busy={busy}
+                        save={(caps) => act(
+                          `Сохранить суточные лимиты только сайта «${s.name}»? Это не разовый бюджет: лимиты обновляются каждый день UTC.`,
+                          () => assistApi.setSite(s.siteId, caps),
+                        )}
+                      />
+                    </td>
                     <td>
                       <button
                         type="button"

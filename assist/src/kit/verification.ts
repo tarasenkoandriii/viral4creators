@@ -1,4 +1,5 @@
 /* СГЕНЕРИРОВАНО scripts/sync-site-tma-kit.mjs — не править. Источник: site-tma-kit/src/verification.ts */
+import { VERIFY_RESPONSE_HEADER } from './brand';
 /**
  * Подтверждение владения хостом: инструкции и разбор статусов.
  *
@@ -43,7 +44,10 @@ export interface MetaInstruction {
   tag: string;
 }
 export type VerifyInstruction =
-  DnsInstruction | FileInstruction | MetaInstruction;
+  | DnsInstruction
+  | FileInstruction
+  | MetaInstruction
+  | { method: 'header'; pageUrl: string; name: string; value: string };
 
 /**
  * Токен попадает в HTML-тег, который человек вставит себе на главную, и
@@ -80,6 +84,13 @@ export function buildInstruction(
       };
     case 'file':
       return { method, url: `${origin}${VERIFY_FILE_PATH}`, content: token };
+    case 'header':
+      return {
+        method,
+        pageUrl: `${origin}/`,
+        name: VERIFY_RESPONSE_HEADER,
+        value: token,
+      };
     case 'meta':
       return {
         method,
@@ -114,9 +125,11 @@ export function buildDnsBatch(
 export function availableMethods(
   host: Pick<SiteHost, 'host' | 'publicPlatform'>
 ): VerifyMethod[] {
+  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$/.test(host.host))
+    return ['dns', 'header'];
   return host.publicPlatform || isPublicPlatformHost(host.host)
     ? ['dns']
-    : [...VERIFY_METHODS];
+    : VERIFY_METHODS.filter((method) => method !== 'header');
 }
 
 export function parseHostStatus(raw: unknown): HostStatus | null {

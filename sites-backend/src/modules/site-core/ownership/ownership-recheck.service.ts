@@ -20,6 +20,7 @@
  * давно не проверенные — первыми, остаток — на следующий день.
  */
 
+import { isVercelProjectHost } from '../hosts/host-normalize';
 import { Injectable, Logger } from '@nestjs/common';
 import type { SiteHost } from '@prisma/client';
 import { SitesDb } from '../../../prisma/sites-db.service';
@@ -125,9 +126,11 @@ export class OwnershipRecheckService {
       return;
     }
     const method: VerifyMethod =
-      h.publicPlatform || (h.method !== 'file' && h.method !== 'meta')
-        ? 'dns'
-        : h.method;
+      h.method === 'header' && isVercelProjectHost(h.host)
+        ? 'header'
+        : h.publicPlatform || (h.method !== 'file' && h.method !== 'meta')
+          ? 'dns'
+          : h.method;
     out.checked++;
     let r;
     try {

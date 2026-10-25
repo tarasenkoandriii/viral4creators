@@ -27,6 +27,7 @@ export interface Page {
   status: number;
   body?: string;
   location?: string;
+  headers?: Record<string, string>;
 }
 
 export class FakeNet {
@@ -79,7 +80,7 @@ export class FakeNet {
       this.fetched.push(url);
       const p = this.pages.get(url);
       if (!p) return new Response('not found', { status: 404 });
-      const headers = new Headers();
+      const headers = new Headers(p.headers);
       if (p.location) headers.set('location', p.location);
       return new Response(p.body ?? '', { status: p.status, headers });
     },

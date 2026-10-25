@@ -29,7 +29,7 @@ for (const s of serverList) {
   assert.equal(isPublicPlatformHost(`shop.${s}`), true, s);
   assert.deepEqual(
     availableMethods({ host: `x.${s}`, publicPlatform: false }),
-    ['dns'],
+    s === 'vercel.app' ? ['dns', 'header'] : ['dns'],
     s
   );
 }

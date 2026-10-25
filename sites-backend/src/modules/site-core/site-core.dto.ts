@@ -35,14 +35,14 @@ export class AddHostDto {
 export class MethodDto {
   @IsOptional()
   @IsIn(VERIFY_METHODS as unknown as string[], {
-    message: 'Способ проверки: dns, file или meta',
+    message: 'Способ проверки: dns, file, meta или header',
   })
   method?: VerifyMethod;
 }
 
 export class ChallengeDto {
   @IsIn(VERIFY_METHODS as unknown as string[], {
-    message: 'Способ проверки: dns, file или meta',
+    message: 'Способ проверки: dns, file, meta или header',
   })
   method!: VerifyMethod;
 }

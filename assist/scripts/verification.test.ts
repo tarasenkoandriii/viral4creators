@@ -111,4 +111,25 @@ assert.deepEqual(
   3
 );
 
+assert.deepEqual(
+  availableMethods({ host: 'raffle-fe-next.vercel.app', publicPlatform: true }),
+  ['dns', 'header']
+);
+assert.deepEqual(
+  availableMethods({ host: 'nested.tenant.vercel.app', publicPlatform: true }),
+  ['dns']
+);
+assert.deepEqual(
+  buildInstruction(
+    'header',
+    { scheme: 'https', host: 'raffle-fe-next.vercel.app', port: 443 },
+    TOKEN
+  ),
+  {
+    method: 'header',
+    pageUrl: 'https://raffle-fe-next.vercel.app/',
+    name: 'x-v4c-verify',
+    value: TOKEN,
+  }
+);
 console.log('verification: ok');

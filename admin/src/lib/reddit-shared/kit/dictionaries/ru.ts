@@ -2,6 +2,7 @@
 // Источник: site-tma-kit/src/dictionaries/ru.ts. Правка — в источнике, затем
 // `node scripts/sync-admin-reddit-shared.mjs`; CI сверяет копию флагом --check.
 
+import { VERIFY_RESPONSE_HEADER } from '../brand';
 /**
  * Словарь кабинета — русский. Источник типа `Dictionary`: uk и en обязаны
  * иметь ровно те же ключи (проверяет tsc и скрипт `i18n.test.ts`).
@@ -185,11 +186,13 @@ export const ru = {
       'Выберите способ. Подтверждение действует 90 дней и общее для всех наших сервисов этого кабинета.',
     tokenLabel: 'Токен кабинета',
     methods: {
+      header: 'Заголовок Vercel',
       dns: 'DNS-запись TXT',
       file: 'Файл на сайте',
       meta: 'Мета-тег на главной',
     },
     methodHints: {
+      header: `Vercel → CDN → Routing: добавьте ответный заголовок ${VERIFY_RESPONSE_HEADER} только для точного production-хоста и пути /. Репозиторий менять не нужно. Не удаляйте правило: оно перепроверяется.`,
       dns: 'Основной способ. Подходит для любого хоста.',
       file: 'Только корень хоста.',
       meta: 'Только главная страница хоста.',

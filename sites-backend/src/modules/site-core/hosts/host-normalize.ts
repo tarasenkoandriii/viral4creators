@@ -176,3 +176,8 @@ export function optOutCandidates(host: string): string[] {
   }
   return out;
 }
+
+/** Exact single-project hostname; no apex, wildcard or nested tenant hosts. */
+export function isVercelProjectHost(host: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$/.test(host);
+}
