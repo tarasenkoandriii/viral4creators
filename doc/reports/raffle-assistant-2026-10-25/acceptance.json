@@ -1,0 +1,47 @@
+{
+  "siteId": "cmvnqslxj000008lb33zuq9qh",
+  "allowedOrigin": "https://raffle-fe-next.vercel.app",
+  "publicKey": "pk_live_WP7uhdoB5eWOhcZwSbxWQ0Et",
+  "loader": "https://assist-w.viral4creators.app/v1/loader.js",
+  "widgetVersion": 1,
+  "personaVersion": 1,
+  "hostStatus": "verified",
+  "productionOriginAndCsp": "passed",
+  "stt": {
+    "status": 200,
+    "text": "Which network does RaffleMarket use?",
+    "lang": "en",
+    "hasVoiceTicket": true
+  },
+  "groundedTextAnswer": "Currently, raffles on Raffle Market operate on the TON Testnet, which uses only test coins without any real monetary value [S1]. Readiness for the mainnet, exchange, or fiat payouts is not claimed, and a TON Mainnet wallet is accounted for separately [S1]. Please note that the original information on the website is provided in Russian (ru).",
+  "replySources": [
+    {
+      "n": 1,
+      "url": null,
+      "title": "В какой сети работает Raffle Market?"
+    }
+  ],
+  "actions": [],
+  "firstRequestReplaySameIds": true,
+  "tts": {
+    "status": 200,
+    "mime": "audio/mpeg",
+    "bytes": 342188
+  },
+  "platformLedgerCostUsd": 0.09243,
+  "approvedTotalUsd": 0.7,
+  "finalChatCapUsd": 0,
+  "finalVoiceCapUsd": 0,
+  "quotaDenial": "429 VOICE_LIMIT",
+  "ownTestConversationsDeleted": 3,
+  "otherSiteCapsUnchanged": true,
+  "mainCi": {
+    "commit": "69642627",
+    "run": 40197429678,
+    "status": "success",
+    "passedTests": 5663,
+    "skippedTests": 3
+  },
+  "hardwareAcceptance": false,
+  "raffleRepositoryChangedByThisChat": false
+}
