@@ -97,7 +97,7 @@ const commit = (msg) => {
 };
 const runWith = (cwdRel, base, overrides, ...paths) => {
   const env = { ...process.env };
-  for (const key of ['VERCEL_GIT_PREVIOUS_SHA', 'VERCEL_ENV', 'VERCEL_GIT_COMMIT_REF', 'VERCEL_FORCE_BUILD']) delete env[key];
+  for (const key of ['VERCEL_GIT_PREVIOUS_SHA', 'VERCEL_ENV', 'VERCEL_GIT_COMMIT_REF', 'VERCEL_FORCE_BUILD', 'VERCEL_GIT_PROVIDER', 'VERCEL_GIT_REPO_OWNER', 'VERCEL_GIT_REPO_SLUG']) delete env[key];
   Object.assign(env, overrides);
   if (base !== undefined) env.VERCEL_GIT_PREVIOUS_SHA = base;
   return spawnSync('bash', [SCRIPT, ...paths], { cwd: path.join(repo, cwdRel), env, encoding: 'utf8' }).status;
@@ -183,6 +183,21 @@ try {
   expect('shallow first preview: dependency builds', shallowRun('.', '../dict'), 1);
   git('remote', 'set-url', 'origin', path.join(remote, 'unavailable'));
   expect('first preview: unavailable origin builds', runWith('app', undefined, preview, '.'), 1);
+
+  // Vercel strips origin: test its GitHub metadata path without real network.
+  // Git's repository-local URL rewrite points the exact fixture URL at a bare repo.
+  git('remote', 'remove', 'origin');
+  git('config', `url.${pathToFileURL(remote).href}.insteadOf`, 'https://github.com/v4c-fixture/repo.git');
+  const metadata = { ...preview, VERCEL_GIT_PROVIDER: 'github', VERCEL_GIT_REPO_OWNER: 'v4c-fixture', VERCEL_GIT_REPO_SLUG: 'repo' };
+  expect('no origin: GitHub metadata matching tree', runWith('app', undefined, metadata, '.'), 0);
+  expect('no origin: GitHub metadata dependency', runWith('app', undefined, metadata, '.', '../dict'), 1);
+  expect('no origin: unknown provider builds', runWith('app', undefined, { ...metadata, VERCEL_GIT_PROVIDER: 'gitlab' }, '.'), 1);
+  expect('no origin: invalid owner builds', runWith('app', undefined, { ...metadata, VERCEL_GIT_REPO_OWNER: 'org/../bad' }, '.'), 1);
+  expect('no origin: invalid slug builds', runWith('app', undefined, { ...metadata, VERCEL_GIT_REPO_SLUG: '../bad' }, '.'), 1);
+  expect('no origin: missing metadata builds', runWith('app', undefined, preview, '.'), 1);
+  git('config', `url.${pathToFileURL(path.join(remote, 'unavailable')).href}.insteadOf`, 'https://github.com/v4c-fixture/private.git');
+  expect('no origin: unavailable metadata repository builds', runWith('app', undefined, { ...metadata, VERCEL_GIT_REPO_SLUG: 'private' }, '.'), 1);
+
 
 } finally {
   rmSync(repo, { recursive: true, force: true });
