@@ -1,3 +1,4 @@
+import { firstConversationId } from './first-conversation-id';
 import {
   providerErrorStatus,
   providerQuotaDiagnostic,
@@ -370,22 +371,26 @@ export class SiteChatService {
     const now = this.now();
 
     // ── 1. Диалог этого посетителя и идемпотентность ──
-    let conv: ConvRow | null = input.conversationId
-      ? await db.assistSiteConversation.findFirst({
-          where: {
-            id: input.conversationId,
-            siteId: site.siteId,
-            visitorId: input.visitor.visitorId,
-          },
-          select: {
-            id: true,
-            answers: true,
-            dialogCounted: true,
-            lastMessageAt: true,
-            suspicious: true,
-          },
-        })
-      : null;
+    const firstId = firstConversationId(
+      site.accountId,
+      site.siteId,
+      input.visitor.visitorId,
+      input.clientRequestId,
+    );
+    let conv: ConvRow | null = await db.assistSiteConversation.findFirst({
+      where: {
+        id: input.conversationId || firstId,
+        siteId: site.siteId,
+        visitorId: input.visitor.visitorId,
+      },
+      select: {
+        id: true,
+        answers: true,
+        dialogCounted: true,
+        lastMessageAt: true,
+        suspicious: true,
+      },
+    });
     if (conv) {
       const existing = await this.answerByCrid(conv.id, input.clientRequestId);
       if (existing) return this.replay(conv.id, existing, emit);
@@ -458,30 +463,57 @@ export class SiteChatService {
       conv = { ...conv, answers: 0, dialogCounted: false };
     }
     if (!conv) {
-      conv = await db.assistSiteConversation.create({
-        data: {
-          accountId: site.accountId,
-          siteId: site.siteId,
-          visitorId: input.visitor.visitorId,
-          ipHash: input.visitor.ipHash,
-          parentOrigin: site.parentOrigin,
-          pageUrl: safePageUrl(input.page.url, hosts),
-          locale: input.uiLang?.slice(0, 8) ?? null,
-          suspicious: avail.ok ? avail.suspicious : false,
-          openedBy:
-            typeof input.openedBy === 'string' && OPENED_BY.test(input.openedBy)
-              ? input.openedBy
-              : null,
-          lastMessageAt: now,
-        },
-        select: {
-          id: true,
-          answers: true,
-          dialogCounted: true,
-          lastMessageAt: true,
-          suspicious: true,
-        },
-      });
+      try {
+        conv = await db.assistSiteConversation.create({
+          data: {
+            id: firstId,
+            accountId: site.accountId,
+            siteId: site.siteId,
+            visitorId: input.visitor.visitorId,
+            ipHash: input.visitor.ipHash,
+            parentOrigin: site.parentOrigin,
+            pageUrl: safePageUrl(input.page.url, hosts),
+            locale: input.uiLang?.slice(0, 8) ?? null,
+            suspicious: avail.ok ? avail.suspicious : false,
+            openedBy:
+              typeof input.openedBy === 'string' &&
+              OPENED_BY.test(input.openedBy)
+                ? input.openedBy
+                : null,
+            lastMessageAt: now,
+          },
+          select: {
+            id: true,
+            answers: true,
+            dialogCounted: true,
+            lastMessageAt: true,
+            suspicious: true,
+          },
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2002') throw error;
+        // Concurrent first requests share a primary key before either can create messages.
+        conv = await db.assistSiteConversation.findFirst({
+          where: {
+            id: firstId,
+            siteId: site.siteId,
+            visitorId: input.visitor.visitorId,
+          },
+          select: {
+            id: true,
+            answers: true,
+            dialogCounted: true,
+            lastMessageAt: true,
+            suspicious: true,
+          },
+        });
+        if (!conv) throw error;
+        const existing = await this.answerByCrid(
+          conv.id,
+          input.clientRequestId,
+        );
+        if (existing) return this.replay(conv.id, existing, emit);
+      }
     }
     const convId = conv.id;
     const answerId = randomUUID();

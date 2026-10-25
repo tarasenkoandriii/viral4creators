@@ -199,6 +199,53 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
     expect(other.meta!.messageId).not.toBe(first.meta!.messageId);
   });
 
+  it('replays an initial request with null conversationId without a second model call', async () => {
+    const s = await st.stand('shop');
+    const visitor = st.visitor();
+    const input = st.input(s, 'Скільки коштує доставка Новою поштою?', {
+      visitor,
+      conversationId: null,
+      clientRequestId: randomUUID(),
+    });
+    const first = await collect(st.chat.ask(input));
+    const repeated = await collect(st.chat.ask(input));
+    expect(repeated.meta).toMatchObject({
+      replay: true,
+      conversationId: first.meta!.conversationId,
+      messageId: first.meta!.messageId,
+    });
+    expect(st.model.calls).toHaveLength(1);
+    expect(
+      await st.owner.assistSiteConversation.count({
+        where: { id: first.meta!.conversationId },
+      }),
+    ).toBe(1);
+  });
+
+  it('concurrent initial requests with null conversationId create one dialog and one answer', async () => {
+    const s = await st.stand('shop');
+    st.model.delayMs = 15;
+    const input = st.input(s, 'Скільки коштує доставка Новою поштою?', {
+      visitor: st.visitor(),
+      conversationId: null,
+      clientRequestId: randomUUID(),
+    });
+    const [first, repeated] = await Promise.all([
+      collect(st.chat.ask(input)),
+      collect(st.chat.ask(input)),
+    ]);
+    expect(first.error).toBeFalsy();
+    expect(repeated.error).toBeFalsy();
+    expect(first.meta!.conversationId).toBe(repeated.meta!.conversationId);
+    expect(first.meta!.messageId).toBe(repeated.meta!.messageId);
+    expect(st.model.calls).toHaveLength(1);
+    expect(
+      await st.owner.assistSiteMessage.count({
+        where: { conversationId: first.meta!.conversationId },
+      }),
+    ).toBe(2);
+  });
+
   it('два одинаковых запроса параллельно (двойной клик) — один вызов модели, оба получают ответ', async () => {
     const s = await st.stand('shop');
     const visitor = st.visitor();
