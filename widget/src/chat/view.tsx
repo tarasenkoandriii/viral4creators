@@ -1317,9 +1317,10 @@ export function App({
           </div>
         )}
       {!leadOnly && s.voice.mic && (
-        <div class="note">
+        <div class="note voice-options">
           <button
             type="button"
+            class="voice-toggle"
             aria-pressed={s.voice.handsFree}
             disabled={
               !s.voice.handsFree &&
@@ -1338,7 +1339,11 @@ export function App({
           s.voice.phase === 'sending' ||
           s.voice.playing ||
           s.voice.loading) && (
-          <button type="button" onClick={() => c.voice.stop()}>
+          <button
+            type="button"
+            class="voice-stop"
+            onClick={() => c.voice.stop()}
+          >
             {t.voiceStopAll}
           </button>
         )}

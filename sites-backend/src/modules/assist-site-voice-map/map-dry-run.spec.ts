@@ -226,65 +226,72 @@ describe('сухой прогон голосовой карты (заход 9)',
   });
 
   it('аудит P2-3: срок модели — остаток команд `model_skipped`; одновременно ≤ 3 вызова; каждому — остаток срока', async () => {
-    // 8 целей с общей фразой «дублікат» — прямого пути нет ни у одной.
-    const many = parseVoiceMapContent({
-      schemaVersion: 1,
-      targets: Array.from({ length: 8 }, (_, i) => ({
-        key: `t${i + 1}`,
-        scope: 'site',
-        descriptor: btn(`Ціль ${i + 1}`, `t${i + 1}`),
-        synonyms: { uk: [{ text: 'дублікат', origin: 'owner' }] },
-      })),
-    });
-    const page = snap(
-      Array.from({ length: 8 }, (_, i) =>
-        el({ text: `Ціль ${i + 1}`, assistId: `t${i + 1}` }),
-      ),
-      '/',
-    );
-    let now = 0;
-    let active = 0;
-    let peak = 0;
-    const budgets: number[] = [];
-    const t0 = Date.now();
-    const r = await dryRunMap({
-      content: many,
-      pages: [{ path: '/', snapshot: page }],
-      rules,
-      hosts: [HOST],
-      deadlineMs: 250,
-      clock: () => Date.now() - t0 + now,
-      model: async (_p, left) => {
-        budgets.push(left);
-        active++;
-        peak = Math.max(peak, active);
-        await new Promise((res) => setTimeout(res, 100));
-        active--;
-        return '{"command": true, "steps": []}';
-      },
-    });
-    const took = Date.now() - t0;
-    expect(peak).toBeLessThanOrEqual(DRY_RUN_LIMITS.concurrency);
-    // 8 команд по 100 мс, срок 250 мс, по 3 одновременно: две волны
-    // успевают (ответ «пусто» — `wrong`), третья обрывается сроком.
-    expect(r.failed).toBe(6);
-    expect(r.skipped).toBe(2);
-    expect(r.commands).toHaveLength(8);
-    expect(took).toBeLessThan(250 + 200);
-    expect(budgets.every((b) => b <= 250)).toBe(true);
-    // Модель зависла дольше срока — команда «без модели», прогон не ждёт.
-    now = 0;
-    const t1 = Date.now();
-    const hung = await dryRunMap({
-      content: many,
-      pages: [{ path: '/', snapshot: page }],
-      rules,
-      hosts: [HOST],
-      deadlineMs: 150,
-      model: () => new Promise<string | null>(() => undefined),
-    });
-    expect(Date.now() - t1).toBeLessThan(400);
-    expect(hung.skipped).toBe(8);
+    jest.useFakeTimers();
+    try {
+      // 8 целей с общей фразой «дублікат» — прямого пути нет ни у одной.
+      const many = parseVoiceMapContent({
+        schemaVersion: 1,
+        targets: Array.from({ length: 8 }, (_, i) => ({
+          key: `t${i + 1}`,
+          scope: 'site',
+          descriptor: btn(`Ціль ${i + 1}`, `t${i + 1}`),
+          synonyms: { uk: [{ text: 'дублікат', origin: 'owner' }] },
+        })),
+      });
+      const page = snap(
+        Array.from({ length: 8 }, (_, i) =>
+          el({ text: `Ціль ${i + 1}`, assistId: `t${i + 1}` }),
+        ),
+        '/',
+      );
+      let active = 0;
+      let peak = 0;
+      const budgets: number[] = [];
+      const t0 = Date.now();
+      const pending = dryRunMap({
+        content: many,
+        pages: [{ path: '/', snapshot: page }],
+        rules,
+        hosts: [HOST],
+        deadlineMs: 250,
+        clock: () => Date.now() - t0,
+        model: async (_p, left) => {
+          budgets.push(left);
+          active++;
+          peak = Math.max(peak, active);
+          await new Promise((res) => setTimeout(res, 100));
+          active--;
+          return '{"command": true, "steps": []}';
+        },
+      });
+      await jest.advanceTimersByTimeAsync(250);
+      const r = await pending;
+      const took = Date.now() - t0;
+      expect(peak).toBeLessThanOrEqual(DRY_RUN_LIMITS.concurrency);
+      // 8 команд по 100 мс, срок 250 мс, по 3 одновременно: две волны
+      // успевают (ответ «пусто» — `wrong`), третья обрывается сроком.
+      expect(r.failed).toBe(6);
+      expect(r.skipped).toBe(2);
+      expect(r.commands).toHaveLength(8);
+      expect(took).toBeLessThan(250 + 200);
+      expect(budgets.every((b) => b <= 250)).toBe(true);
+      // Модель зависла дольше срока — команда «без модели», прогон не ждёт.
+      const t1 = Date.now();
+      const pendingHung = dryRunMap({
+        content: many,
+        pages: [{ path: '/', snapshot: page }],
+        rules,
+        hosts: [HOST],
+        deadlineMs: 150,
+        model: () => new Promise<string | null>(() => undefined),
+      });
+      await jest.advanceTimersByTimeAsync(150);
+      const hung = await pendingHung;
+      expect(Date.now() - t1).toBe(150);
+      expect(hung.skipped).toBe(8);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('отпечаток шаблона: похожие образцы — один отпечаток; чужая страница под маской — mixed; текст не влияет', () => {
