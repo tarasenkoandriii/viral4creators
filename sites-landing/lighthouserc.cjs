@@ -68,6 +68,18 @@ module.exports = {
       chromePath: process.env.CHROME_PATH || undefined,
       settings: {
         chromeFlags: '--no-sandbox --headless=new',
+        // Measure the throttled browser instead of predicting an alternate
+        // execution graph from an unthrottled trace (see doc/CI.md).
+        // Same standard mobile Slow 4G profile, including request-level factors.
+        throttlingMethod: 'devtools',
+        throttling: {
+          rttMs: 150,
+          throughputKbps: 1638.4,
+          requestLatencyMs: 562.5,
+          downloadThroughputKbps: 1474.56,
+          uploadThroughputKbps: 675,
+          cpuSlowdownMultiplier: 4,
+        },
       },
     },
     assert: {
