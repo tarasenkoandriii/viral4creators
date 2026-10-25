@@ -18,6 +18,9 @@
 # База сравнения — VERCEL_GIT_PREVIOUS_SHA: коммит последнего УСПЕШНОГО
 # деплоя этого проекта на этой ветке. Значит, если пушнули несколько
 # коммитов сразу или прошлый деплой упал, изменения не потеряются.
+# У первого preview на новой ветке базы нет: сравниваем дерево проекта
+# с актуальной default-веткой origin. Это только skip неизменённого preview;
+# production, неизвестная ветка/remote или ошибка fetch — всегда сборка.
 # Любая неясность (нет базы, история не достаётся) — СОБИРАТЬ: лишний
 # деплой дешевле пропущенного.
 set -u
@@ -37,7 +40,43 @@ fi
 
 base="${VERCEL_GIT_PREVIOUS_SHA:-}"
 if [ -z "$base" ]; then
-  echo "vercel-ignore-build: нет прошлого успешного деплоя — собираю"
+  [ -n "${VERCEL_GIT_COMMIT_REF:-}" ] && ref_known=yes || ref_known=no
+  git remote 2>/dev/null | awk '$0 == "origin" { found = 1 } END { exit !found }' && origin_known=yes || origin_known=no
+  echo "vercel-ignore-build: env=${VERCEL_ENV:-unknown}, branch-known=$ref_known, origin-known=$origin_known"
+fi
+if [ -z "$base" ] && [ "${VERCEL_ENV:-}" = "preview" ] && [ -n "${VERCEL_GIT_COMMIT_REF:-}" ]; then
+  repo_remote=origin
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    repo_remote=""
+    owner="${VERCEL_GIT_REPO_OWNER:-}"
+    slug="${VERCEL_GIT_REPO_SLUG:-}"
+    # Vercel can remove Git remotes from its build clone. Use only its known
+    # GitHub repository metadata; private/unavailable repositories still build.
+    if [ "${VERCEL_GIT_PROVIDER:-}" = github ] &&
+       [[ "$owner" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] &&
+       [[ "$slug" =~ ^[A-Za-z0-9_.-]+$ ]] && [ "$slug" != . ] && [ "$slug" != .. ]; then
+      repo_remote="https://github.com/$owner/$slug.git"
+      echo "vercel-ignore-build: источник Git — GitHub metadata"
+    fi
+  fi
+  default_ref=""
+  if [ -n "$repo_remote" ]; then
+    default_ref="$(git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=10 ls-remote --symref "$repo_remote" HEAD 2>/dev/null | awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }')"
+  fi
+  [ -n "$default_ref" ] && echo "vercel-ignore-build: default branch найдена" || echo "vercel-ignore-build: default branch недоступна"
+  case "$default_ref" in
+    refs/heads/*)
+      if git check-ref-format "$default_ref" >/dev/null 2>&1 &&
+         [ "${default_ref#refs/heads/}" != "$VERCEL_GIT_COMMIT_REF" ] &&
+         git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=10 fetch --quiet --depth=1 "$repo_remote" "$default_ref" 2>/dev/null; then
+        base="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
+        [ -z "$base" ] || echo "vercel-ignore-build: первый preview — сравниваю с ${default_ref#refs/heads/}"
+      fi
+      ;;
+  esac
+fi
+if [ -z "$base" ]; then
+  echo "vercel-ignore-build: нет достоверной базы — собираю"
   exit 1
 fi
 
