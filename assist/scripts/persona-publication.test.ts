@@ -22,7 +22,13 @@ const publication: ApiClient = {
 };
 const api = createPersonaApi(regular, publication);
 await api.get('site1');
-await assert.rejects(api.publish('site1'), (e) => e === failure);
+let caught: unknown;
+try {
+  await api.publish('site1');
+} catch (error) {
+  caught = error;
+}
+assert.equal(caught, failure);
 assert.deepEqual(calls, [
   'regular:GET:/assist/sites/site1/persona',
   'publication:POST:/assist/sites/site1/persona/publish',
