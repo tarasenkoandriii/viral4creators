@@ -57,6 +57,8 @@ const violations = [];
 let runs = 0;
 
 async function audit(page, label) {
+  // Inspect offscreen contrast too: containment must not hide content from axe.
+  await page.addStyleTag({ content: '.section, .media-section { content-visibility: visible !important; }' });
   await page.addScriptTag({ content: AXE });
   const result = await page.evaluate(async (tags) => {
     // eslint-disable-next-line no-undef
