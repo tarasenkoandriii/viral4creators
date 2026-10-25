@@ -54,7 +54,14 @@ export function setupErrorText(
 ): string {
   if (e instanceof ClientSetupError) return app.setup.errors[e.code];
   if (e instanceof ApiError) {
-    if (isSetupErrorCode(e.code)) return app.setup.errors[e.code];
+    if (isSetupErrorCode(e.code)) {
+      const message = app.setup.errors[e.code];
+      const reason =
+        e.code === 'PERSONA_GATE_FAILED' ? e.details?.reason : null;
+      return typeof reason === 'string' && reason.trim()
+        ? `${message} ${reason.slice(0, 500)}`
+        : message;
+    }
     if (e.code === 'FORBIDDEN' || e.code === 'http_403') {
       return app.setup.common.noAccess;
     }

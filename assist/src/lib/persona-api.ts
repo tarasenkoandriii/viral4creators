@@ -128,7 +128,10 @@ function seg(id: string): string {
   return id;
 }
 
-export function createPersonaApi(client: ApiClient): PersonaApi {
+export function createPersonaApi(
+  client: ApiClient,
+  publicationClient: ApiClient = client
+): PersonaApi {
   const p = (id: string) => `/assist/sites/${seg(id)}/persona`;
   const view = async (x: Promise<unknown>) => parsePersonaSettings(await x);
   const leads = async (id: string, x: Promise<unknown>) => {
@@ -139,7 +142,8 @@ export function createPersonaApi(client: ApiClient): PersonaApi {
     get: async (id) => view(client.request('GET', p(id))),
     saveDraft: async (id, persona) =>
       view(client.request('PATCH', p(id), { persona })),
-    publish: async (id) => view(client.request('POST', `${p(id)}/publish`)),
+    publish: async (id) =>
+      view(publicationClient.request('POST', `${p(id)}/publish`)),
     rollback: async (id, ver) =>
       view(client.request('POST', `${p(id)}/rollback/${count(ver)}`)),
     getLeads: async (id) =>
