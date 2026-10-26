@@ -1,3 +1,5 @@
+import { describeDb } from '../assist-sandbox/testing/k3-stack.testing';
+import { ChatStack } from '../assist-site-chat/testing/chat-stack.testing';
 import { PlatformAdminController } from './platform-admin.controller';
 import { PlatformAdmin } from './platform-admin.service';
 
@@ -33,6 +35,7 @@ describe('per-site voice caps', () => {
       expect(prisma.assistSite.update).not.toHaveBeenCalled();
       const [sql, value, site] = prisma.$executeRaw.mock.calls[0];
       expect(sql.join('')).toContain('jsonb_set');
+      expect(sql.join('')).toContain('UPDATE "sites"."assist_sites"');
       expect(value).toBe(JSON.stringify(voiceAutoSpeak));
       expect(site).toBe('raffle-site');
       expect(prisma.assistPlatformAccessLog.create).toHaveBeenCalledWith({
@@ -94,5 +97,56 @@ describe('per-site voice caps', () => {
     expect(prisma.assistPlatformAccessLog.create).toHaveBeenCalledWith({
       data: { actor: 'operator', action: 'site:voice-cap', target: siteId },
     });
+  });
+});
+
+describeDb('admin auto-speech with the default database search path', () => {
+  const st = new ChatStack();
+  beforeAll(async () => st.init());
+  afterAll(async () => st.close());
+  it('persists both values without changing other voice settings, caps or sites', async () => {
+    const one = await st.site();
+    const two = await st.site();
+    const voiceConfig = {
+      schema: 1,
+      input: true,
+      output: true,
+      voiceId: 'Maya',
+    };
+    await st.owner.assistSite.update({
+      where: { siteId: one.siteId },
+      data: {
+        voiceConfig,
+        dailyCapMicroUsd: 500000,
+        voiceDailyCapMicroUsd: 100000,
+      },
+    });
+    const other = await st.owner.assistSite.findUniqueOrThrow({
+      where: { siteId: two.siteId },
+    });
+    const service = new PlatformAdmin(st.owner);
+    jest.spyOn(service, 'account').mockResolvedValue({} as never);
+    const search = await st.owner.$queryRaw<
+      Array<{ search_path: string }>
+    >`SHOW search_path`;
+    expect(search[0].search_path).not.toContain('sites');
+    for (const voiceAutoSpeak of [false, true]) {
+      await service.setSite(one.siteId, 'operator', { voiceAutoSpeak });
+      const row = await st.owner.assistSite.findUniqueOrThrow({
+        where: { siteId: one.siteId },
+      });
+      expect(row.voiceConfig).toEqual({
+        ...voiceConfig,
+        autoSpeak: voiceAutoSpeak,
+      });
+      expect(row.dailyCapMicroUsd).toBe(500000);
+      expect(row.voiceDailyCapMicroUsd).toBe(100000);
+      const untouched = await st.owner.assistSite.findUniqueOrThrow({
+        where: { siteId: two.siteId },
+      });
+      expect(untouched.voiceConfig).toEqual(other.voiceConfig);
+      expect(untouched.dailyCapMicroUsd).toBe(other.dailyCapMicroUsd);
+      expect(untouched.voiceDailyCapMicroUsd).toBe(other.voiceDailyCapMicroUsd);
+    }
   });
 });

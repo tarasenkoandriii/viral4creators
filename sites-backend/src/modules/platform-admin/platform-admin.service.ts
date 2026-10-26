@@ -488,7 +488,7 @@ export class PlatformAdmin {
       await this.prisma.assistSite.update({ where: { siteId }, data });
     if (body.voiceAutoSpeak !== undefined)
       await this.prisma.$executeRaw`
-        UPDATE assist_sites
+        UPDATE "sites"."assist_sites"
         SET "voiceConfig" = jsonb_set(
           COALESCE("voiceConfig", '{"schema":1,"input":false,"output":false,"voiceId":null}'::jsonb),
           '{autoSpeak}', ${JSON.stringify(body.voiceAutoSpeak)}::jsonb, true)
