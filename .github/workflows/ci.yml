@@ -1046,8 +1046,11 @@ jobs:
           cache-dependency-path: ffmpeg-server/package-lock.json
       - name: ffmpeg (libx264, libass) и шрифты с кириллицей
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-noto-core
+          # The Azure HTTP mirror exhausted this job's 20-minute budget.
+          # Use Ubuntu's official HTTPS archive; keep every verification enabled.
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-noto-core
           ffmpeg -hide_banner -version | head -n 1
       - run: npm ci
         working-directory: ffmpeg-server
