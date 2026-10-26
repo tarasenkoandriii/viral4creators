@@ -241,6 +241,7 @@ describe('правила без модели и язык', () => {
     expect(answerLangOf('Спасибо', 'uk')).toBe('ru');
     expect(answerLangOf('Де це зараз?', 'ru')).toBe('uk');
     expect(answerLangOf('Raffle Market', 'uk')).toBe('en');
+    expect(answerLangOf('What does «это» mean?', 'uk')).toBe('en');
     expect(answerLangOf('Привет', 'uk')).toBe('uk');
   });
 });

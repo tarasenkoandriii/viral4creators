@@ -24,7 +24,9 @@ export function answerLangOf(
 ): ChatLang {
   const hint = uiLang?.slice(0, 2).toLowerCase() ?? null;
   // UI is only a fallback: an explicit question must keep its own language.
-  if (!/[іїєґыэёъ]/i.test(question)) {
+  const cyr = (question.match(/[а-яА-Я]/g) ?? []).length;
+  const lat = (question.match(/[a-zA-Z]/g) ?? []).length;
+  if (cyr >= lat && !/[іїєґыэёъ]/i.test(question)) {
     if (UK_WORDS.test(question)) return 'uk';
     if (RU_WORDS.test(question)) return 'ru';
   }
