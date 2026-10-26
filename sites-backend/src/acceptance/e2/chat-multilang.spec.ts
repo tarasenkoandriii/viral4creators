@@ -2,7 +2,7 @@
  * ТЗ §4-тер.15 п.7 (§4-тер.10) — языки:
  *  - вопрос на английском к сайту только на украинском → второй поиск по
  *    переводу (`assist-classify`), ответ с источником, в промпте — язык
- *    ответа «in English» и оговорка «информация на сайте — на uk»;
+ *    ответа «in English» без технической приписки о языке базы;
  *  - проверенный ответ на украинском на вопрос на русском — через
  *    генерацию, не прямым путём; тот же вопрос по-украински — прямым путём;
  *  - сбой перевода не ломает ответ (остаётся первый поиск).
@@ -32,17 +32,20 @@ describeDb('§4-тер.15 п.7 — вопрос не на языке базы (c
     st.translator.fail = false;
   });
 
-  it('английский вопрос к украинской базе: перевод + второй поиск, ответ с источником и оговоркой, язык ответа — английский', async () => {
+  it('английский вопрос к украинской базе: перевод + второй поиск, ответ с источником без технической приписки, язык ответа — английский', async () => {
     const s = await st.stand('shop');
     const r = await st.ask(s, 'How much does delivery cost?');
     expect(st.translator.calls).toHaveLength(1);
     expect(st.translator.calls[0].system).toMatch(/into Ukrainian/);
     expect(r.sources.map((x) => x.url)).toContain(s.url('/delivery'));
     expect(r.text).toContain('80 грн');
-    expect(r.text).toMatch(/Information on the site is in language: uk/);
+    expect(r.text).not.toMatch(/Information on the site is in language/);
     const req = st.model.calls[0];
     expect(req.system).toContain('in English');
-    expect(req.system).toMatch(/Знания сайта написаны на языке «uk»/);
+    expect(req.system).not.toMatch(
+      /Знания сайта написаны на языке|в конце коротко оговорись/,
+    );
+    expect(req.system).toContain('Не добавляй технические оговорки');
     const ops = await st.owner.siteAiUsage.findMany({
       where: { siteId: s.siteId },
       select: { operation: true },
