@@ -30,3 +30,12 @@ lookup by the probe's idempotency key returned 404 `NOT_FOUND`, proving no
 job was admitted. `/api/ready` remained true. No input was downloaded and
 no paid render was requested. Actual hosted submission is covered by the
 backend HTTP-mock regression, not a paid production render.
+
+## Final verification
+
+Full CI for `e2da2486f0e99af3abad640f231d4a7ce9741bc1`: **success**.
+[Run 40391325554](https://github.com/tarasenkoandriii/viral4creators/actions/runs/40391325554).
+The Linux FFmpeg matrix passed 400 tests plus 13 backup checks. Backend,
+sites-backend, widget browser acceptance, landing Lighthouse/axe and all
+other required jobs passed. The prior Publisher test-only IP collision
+was fixed without changing production rate limiting.

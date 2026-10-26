@@ -10324,3 +10324,4 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - 26.10, продолжение: CI 40358706288 упал только на устаревших счётчиках (все 11291 активных backend-тестов прошли); обновлено 11305→11306. Отмена FFmpeg была на медленном скачивании Azure apt, до тестов. В CI 40388748617 backend и полный Linux FFmpeg job прошли после перехода на официальный HTTPS archive Ubuntu.
 - Отчёт выкладки: [Tutorial / FFmpeg profile rollout](reports/tutorial-ffmpeg-profile-rollout-2026-10-26.md).
 - В общем CI выявлена коллизия тестовых IP Publisher: случайный адрес из 250 повторял исчерпанный лимит (201→429). Только testing-helper переведён на неповторяющийся пул 65534 адресов с отказом при исчерпании; production rate limit не изменён. Проверена уникальность полного пула.
+- Итог: полный CI коммита e2da2486 зелёный — [40391325554](https://github.com/tarasenkoandriii/viral4creators/actions/runs/40391325554), включая FFmpeg, backend, sites-backend, widget, Lighthouse/axe.
