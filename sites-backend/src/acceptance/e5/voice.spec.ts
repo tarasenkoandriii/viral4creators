@@ -433,6 +433,53 @@ describeDb('Приёмка Э5 — голос виджета', () => {
     expect(u2!.units).toBe(u2!.dialogs);
   });
 
+  it('phrase TTS uses only the owned answer, caches each phrase and charges the dialog once', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+    const id = a.meta!.messageId;
+    await st.owner.assistSiteMessage.update({
+      where: { id },
+      data: {
+        text: 'First short sentence. Next sentence keeps the same voice. Last sentence.',
+        lang: 'en',
+      },
+    });
+    fake.calls.length = 0;
+    const first = await voice.speak(ctx(s, visitor), id, 0);
+    expect(first).toMatchObject({ ok: true, segmentCount: 2, cached: false });
+    const sent = fake.calls.filter((c) => c.path === 'tts:/tts');
+    expect(sent).toHaveLength(1);
+    expect((sent[0].body as Record<string, unknown>).text).toBe(
+      'First short sentence.',
+    );
+    expect(await voice.speak(ctx(s, visitor), id, 0)).toMatchObject({
+      ok: true,
+      cached: true,
+    });
+    expect(fake.calls.filter((c) => c.path === 'tts:/tts')).toHaveLength(1);
+    expect(await voice.speak(ctx(s, st.visitor()), id, 1)).toEqual({
+      ok: false,
+      failure: 'not_found',
+    });
+    expect(await voice.speak(ctx(s, visitor), id, 16)).toEqual({
+      ok: false,
+      failure: 'not_found',
+    });
+    expect(fake.calls.filter((c) => c.path === 'tts:/tts')).toHaveLength(1);
+    expect(await voice.speak(ctx(s, visitor), id, 1)).toMatchObject({
+      ok: true,
+      segmentCount: 2,
+    });
+    expect(fake.calls.filter((c) => c.path === 'tts:/tts')).toHaveLength(2);
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({
+      units: 2,
+      dialogs: 1,
+    });
+    const usage = await usageRows(s.siteId, 'assist-tts');
+    expect(usage).toHaveLength(2);
+  });
+
   it('озвучка ответа в засчитанном текстовом диалоге — доплата до 2; второй раз — без доплаты и из кэша; чужой ответ — not_found', async () => {
     const s = await voiceSite();
     const visitor = st.visitor();

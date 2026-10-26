@@ -525,31 +525,84 @@ export class VoiceController {
   ) {
     const request = new AbortController();
     this.audioRequest = request;
-    try {
+    const active = () =>
+      epoch === this.playbackEpoch && !request.signal.aborted;
+    const fail = (error: unknown) => {
+      if (!active()) return;
+      request.abort();
+      if (this.audioRequest === request) this.audioRequest = null;
+      engine.stopPlayback();
+      this.host.setUi({ loading: null, playing: null });
+      this.failed(error);
+    };
+    const read = async (index: number, expectedCount?: number) => {
       const r = await this.post(
-        '/widget/v1/tts',
+        `/widget/v1/tts?segment=${index}`,
         'application/json',
         JSON.stringify({ messageId }),
         {},
         request.signal
       );
       if (!r.ok) unwrap(r.status, await r.json().catch(() => null));
-      const bytes = await r.arrayBuffer();
-      if (epoch !== this.playbackEpoch) return;
+      const rawCount = r.headers?.get('X-Assist-Tts-Parts');
+      // Older servers ignore the query and return the whole answer once.
+      const count =
+        rawCount === null || rawCount === undefined ? 1 : Number(rawCount);
+      if (
+        !Number.isInteger(count) ||
+        count < 1 ||
+        count > 16 ||
+        (expectedCount !== undefined && count !== expectedCount)
+      )
+        throw new Error('invalid speech parts');
+      const part = r.headers?.get('X-Assist-Tts-Part');
+      if (
+        (rawCount !== null &&
+          rawCount !== undefined &&
+          part !== String(index)) ||
+        (part !== null && part !== undefined && part !== String(index))
+      )
+        throw new Error('invalid speech order');
+      return { bytes: await r.arrayBuffer(), count };
+    };
+    const play = (bytes: ArrayBuffer, index: number, count: number) => {
+      if (!active()) return;
       this.host.setUi({ loading: null, playing: messageId });
-      engine.play(bytes, () => {
-        if (
-          epoch === this.playbackEpoch &&
-          this.host.ui().playing === messageId
-        )
-          this.host.setUi({ playing: null });
-      });
-    } catch (e) {
-      if (epoch !== this.playbackEpoch) return;
-      this.host.setUi({ loading: null, playing: null });
-      this.failed(e);
-    } finally {
-      if (this.audioRequest === request) this.audioRequest = null;
+      // One bounded look-ahead: do not request the rest of a cancelled answer.
+      const next =
+        index + 1 < count
+          ? read(index + 1, count).then(
+              (value) => ({ value }),
+              (error) => ({ error })
+            )
+          : null;
+      let ended = false;
+      try {
+        engine.play(bytes, (failed) => {
+          if (ended || !active()) return;
+          ended = true;
+          if (failed) return fail(new Error('audio playback failed'));
+          if (!next) {
+            this.host.setUi({ loading: null, playing: null });
+            if (this.audioRequest === request) this.audioRequest = null;
+            return;
+          }
+          this.host.setUi({ loading: messageId, playing: null });
+          void next.then((result) => {
+            if (!active()) return;
+            if ('error' in result) return fail(result.error);
+            play(result.value.bytes, index + 1, count);
+          });
+        });
+      } catch (error) {
+        fail(error);
+      }
+    };
+    try {
+      const first = await read(0);
+      play(first.bytes, 0, first.count);
+    } catch (error) {
+      fail(error);
     }
   }
 
