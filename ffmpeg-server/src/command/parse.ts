@@ -659,7 +659,9 @@ function buildPlan(body: JobRequestBody, limits: ParseLimits): ExecPlan {
   }
   const inputEntries = Object.entries(input_files);
   if (inputEntries.length > limits.maxInputs) {
-    throw invalid(`too many inputs (max ${limits.maxInputs})`);
+    // Valid Tutorials may exceed this execution profile. Reject before enqueue
+    // with the existing capability code so hosted fallback remains available.
+    throw unsupported(`too many inputs (max ${limits.maxInputs})`);
   }
   if (output_files.length < 1 || output_files.length > limits.maxOutputs) {
     throw invalid(`output_files must have 1..${limits.maxOutputs} items`);

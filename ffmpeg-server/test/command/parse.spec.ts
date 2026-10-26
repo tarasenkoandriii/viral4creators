@@ -503,3 +503,17 @@ describe('аудит SEC: регрессии FF-SEC-01/02/03', () => {
     expect(parse(job([cmd], v, ['o.mp4']))).toMatchObject({ ok: true });
   });
 });
+
+describe('Tutorial input profile compatibility', () => {
+  it.each([21, 31, 62])('rejects %i files before execution', (count) => {
+    const inputs = Object.fromEntries(
+      Array.from({ length: count }, (_, i) => [
+        `frame${i}`,
+        `https://inputs.test/${i}.png`,
+      ]),
+    );
+    expect(parse(job(['-i {{frame0}} {{out.mp4}}'], inputs))).toEqual(
+      expect.objectContaining({ ok: false, code: 'UNSUPPORTED_COMMAND' }),
+    );
+  });
+});

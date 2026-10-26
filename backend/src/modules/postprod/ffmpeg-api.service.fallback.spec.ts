@@ -9,6 +9,7 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http';
 import { AddressInfo } from 'net';
 import { FfmpegApiService } from './ffmpeg-api.service';
+import { planSlideshow } from '../tutorial-runner/tutorial-video-assembly';
 
 jest.setTimeout(60_000);
 
@@ -378,6 +379,42 @@ describe('доказанный отказ до приёма → hosted тем ж
             fallbackReason: 'refused',
           }),
         ]);
+      },
+    );
+  });
+
+  it('30-frame Tutorial profile refusal submits only one hosted render', async () => {
+    const plan = planSlideshow(
+      Array.from({ length: 30 }, (_, stepIndex) => ({
+        stepIndex,
+        url: `https://blob.example/frame${stepIndex}.png`,
+        seconds: 2,
+      })),
+      { motion: 'none' },
+    )!;
+    expect(Object.keys(plan.inputs)).toHaveLength(30);
+    await scenario(
+      {
+        submit: () => ({
+          status: 422,
+          body: {
+            error: {
+              code: 'UNSUPPORTED_COMMAND',
+              message: 'too many inputs (max 20)',
+            },
+          },
+        }),
+      },
+      async ({ svc, self, hosted, db }) => {
+        const ref = await svc.submit({
+          ...plan,
+          product: 'tutorial-runner',
+          operationKey: 'tutorial:30',
+        });
+        expect(ref.provider).toBe('hosted');
+        expect(self.jobs.size).toBe(0);
+        expect(posts(hosted)).toBe(1);
+        expect(db.routing.breakerFailures).toBe(0);
       },
     );
   });
