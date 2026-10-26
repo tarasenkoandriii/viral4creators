@@ -160,6 +160,10 @@ body {
   color: var(--v4c-on, #fff);
 }
 /* Э3: кто ответил — «ИИ» только у модели, «Оператор» — у человека. */
+.who.ai {
+  align-self: flex-start;
+  width: fit-content;
+}
 .who {
   margin: 0 0 2px;
   font-size: 11px;
@@ -261,6 +265,7 @@ body {
 }
 .fb {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 2px;
   font-size: 12px;
@@ -424,6 +429,7 @@ body {
 }
 .spk {
   display: inline-flex;
+  gap: 6px;
   align-items: center;
 }
 /* Э6-тер: «Я вмію: …» под микрофоном (Р-72). */

@@ -675,13 +675,13 @@ export class SiteChatService {
     const hasContext = !!input.context && Object.keys(input.context).length > 0;
     const cacheKey =
       site.knowledgeVersion > 0 && !hasContext
-        ? semanticCacheKey({
+        ? `${semanticCacheKey({
             siteId: site.siteId,
             mode: 'site',
             knowledgeVersion: site.knowledgeVersion,
             configVersion: site.configVersion,
             question,
-          })
+          })}:answer-v2:${lang}`
         : null;
     if (cacheKey && firstMessage) {
       const cached = await this.cache.get({

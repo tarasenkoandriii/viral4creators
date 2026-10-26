@@ -94,7 +94,7 @@ describe('buildSitePrompt — порядок, данные, недоверенн
     ]);
   });
 
-  it('язык ответа и оговорка — только когда база на другом языке', () => {
+  it('язык ответа сохраняется без раскрытия технического языка базы', () => {
     expect(p.system).not.toMatch(/Знания сайта написаны/);
     const en = buildSitePrompt({
       ...base,
@@ -102,7 +102,10 @@ describe('buildSitePrompt — порядок, данные, недоверенн
       knowledgeLang: 'uk',
     });
     expect(en.system).toMatch(/in English/);
-    expect(en.system).toMatch(/Знания сайта написаны на языке «uk»/);
+    expect(en.system).not.toMatch(
+      /Знания сайта написаны|в конце коротко оговорись/,
+    );
+    expect(en.system).toContain('Не добавляй технические оговорки');
   });
 
   it('сводка с инъекцией и заголовок страницы с инъекцией в промпт не идут', () => {
@@ -235,6 +238,14 @@ describe('правила без модели и язык', () => {
     expect(answerLangOf('Дякую', null)).toBe('uk');
     expect(answerLangOf('Спасибо', null)).toBe('ru');
     expect(answerLangOf('Thanks', null)).toBe('en');
+    expect(answerLangOf('Какую сеть использует Raffle Market?', 'uk')).toBe(
+      'ru',
+    );
+    expect(answerLangOf('Спасибо', 'uk')).toBe('ru');
+    expect(answerLangOf('Де це зараз?', 'ru')).toBe('uk');
+    expect(answerLangOf('Raffle Market', 'uk')).toBe('en');
+    expect(answerLangOf('What does «что» mean?', 'uk')).toBe('en');
+    expect(answerLangOf('Привет', 'uk')).toBe('uk');
   });
 });
 

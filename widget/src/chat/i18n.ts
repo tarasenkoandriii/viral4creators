@@ -75,6 +75,7 @@ const uk = {
   voiceConsent:
     'Голос розпізнає ІІ-помічник цього сайту: запис піде на розпізнавання й одразу видаляється. Увімкнути мікрофон?',
   voiceConsentYes: 'Увімкнути',
+  voicePreparing: 'Готуємо озвучення…',
   voiceSpeak: 'Озвучити відповідь',
   voiceStopSpeak: 'Зупинити озвучення',
   voiceLimit: 'Голос на сьогодні вичерпано — пишіть текстом.',
@@ -249,6 +250,7 @@ const ru: Dict = {
   voiceConsent:
     'Голос распознаёт ИИ-помощник этого сайта: запись уйдёт на распознавание и сразу удаляется. Включить микрофон?',
   voiceConsentYes: 'Включить',
+  voicePreparing: 'Готовим озвучку…',
   voiceSpeak: 'Озвучить ответ',
   voiceStopSpeak: 'Остановить озвучку',
   voiceLimit: 'Голос на сегодня исчерпан — пишите текстом.',
@@ -417,6 +419,7 @@ const en: Dict = {
   voiceConsent:
     "This site's AI assistant will recognise your voice: the recording is sent for transcription and deleted right away. Turn on the microphone?",
   voiceConsentYes: 'Turn on',
+  voicePreparing: 'Preparing audio…',
   voiceSpeak: 'Read the answer aloud',
   voiceStopSpeak: 'Stop reading',
   voiceLimit: 'Voice is used up for today — please type.',

@@ -227,27 +227,42 @@ function Message({
       {server && m.streamState === 'complete' && m.text && (
         <div class="fb">
           {s.voice.speak && (
-            <button
-              type="button"
-              class="spk"
-              aria-pressed={s.voice.playing === m.id}
-              aria-busy={s.voice.loading === m.id}
-              aria-label={
-                s.voice.playing === m.id || s.voice.loading === m.id
-                  ? t.voiceStopSpeak
-                  : t.voiceSpeak
-              }
-              title={t.voiceSpeak}
-              onClick={() => c.voice.speak(m.id)}
-            >
-              <Svg
-                d={
-                  s.voice.playing === m.id || s.voice.loading === m.id
-                    ? STOP
-                    : SPEAKER
+            <>
+              <button
+                type="button"
+                class="spk"
+                disabled={s.voice.loading === m.id}
+                aria-pressed={s.voice.playing === m.id}
+                aria-busy={s.voice.loading === m.id}
+                aria-label={
+                  s.voice.loading === m.id
+                    ? t.voicePreparing
+                    : s.voice.playing === m.id
+                      ? t.voiceStopSpeak
+                      : t.voiceSpeak
                 }
-              />
-            </button>
+                title={
+                  s.voice.playing === m.id ? t.voiceStopSpeak : t.voiceSpeak
+                }
+                onClick={() => c.voice.speak(m.id)}
+              >
+                <Svg d={s.voice.playing === m.id ? STOP : SPEAKER} />
+                {s.voice.loading === m.id && (
+                  <span role="status">{t.voicePreparing}</span>
+                )}
+              </button>
+              {s.voice.loading === m.id && (
+                <button
+                  type="button"
+                  class="spk"
+                  aria-label={t.voiceStopSpeak}
+                  title={t.voiceStopSpeak}
+                  onClick={() => c.voice.cancelSpeech()}
+                >
+                  <Svg d={STOP} />
+                </button>
+              )}
+            </>
           )}
           {m.rated ? (
             <span>{t.thanks}</span>

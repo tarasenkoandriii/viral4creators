@@ -740,6 +740,28 @@ async function main() {
     assert.equal(h.ui.playing, 'new');
     assert.deepEqual(h.notices, []);
   }
+  // Repeated play taps during delayed TTS preserve one request and one playback.
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const originalFetch = g.fetch;
+    const pending: Array<(r: Response) => void> = [];
+    g.fetch = () => new Promise<Response>((r) => pending.push(r));
+    h.vc.speak('waiting');
+    h.vc.speak('waiting');
+    h.vc.speak('waiting');
+    assert.equal(pending.length, 1);
+    assert.equal(h.ui.loading, 'waiting');
+    pending[0](new Response(new Uint8Array(8)));
+    await tick();
+    await tick();
+    g.fetch = originalFetch;
+    assert.equal(h.engine.played.length, 1);
+    assert.equal(h.ui.playing, 'waiting');
+    h.vc.speak('waiting');
+    assert.equal(h.ui.playing, null);
+  }
   // Stop/start of the SAME message: an older response must not play twice (ABA).
   {
     const h = harness();
@@ -749,7 +771,7 @@ async function main() {
     const pending: Array<(r: Response) => void> = [];
     g.fetch = () => new Promise<Response>((r) => pending.push(r));
     h.vc.speak('same');
-    h.vc.speak('same');
+    h.vc.cancelSpeech();
     h.vc.speak('same');
     pending[0](new Response(new Uint8Array(4)));
     await tick();
