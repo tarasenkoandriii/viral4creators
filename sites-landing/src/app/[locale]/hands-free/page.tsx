@@ -1,3 +1,4 @@
+import { VoiceScenarios } from "../../../components/VoiceScenarios";
 import { MediaShowcase } from "../../../components/MediaShowcase";
 import type { Metadata } from "next";
 import { PRODUCT_LINKS } from "../../../brand";
@@ -51,6 +52,7 @@ export default async function VoicePage({
           <p className="voice-example-note">{c.exampleNote}</p>
         </figure>
       </section>
+      <VoiceScenarios title={c.scenariosTitle} note={c.scenariosNote} items={c.scenarios} />
       <MediaShowcase locale={locale} product="voice" />
       <section className="section wrap">
         <h2>{c.usesTitle}</h2>

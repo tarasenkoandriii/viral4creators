@@ -28,6 +28,17 @@ async function run() {
     assert.ok(voice.includes(d.voiceLanding.task));
     assert.ok(voice.includes(d.voiceLanding.exampleLabel));
     assert.ok(voice.includes(d.voiceLanding.exampleNote));
+    assert.ok(voice.includes(d.voiceLanding.scenariosTitle));
+    assert.ok(voice.includes(d.voiceLanding.scenariosNote));
+    assert.equal((voice.match(/class="voice-scenario-art"/g) ?? []).length, 3);
+    for (const scenario of d.voiceLanding.scenarios) {
+      assert.ok(voice.includes(scenario.title));
+      assert.ok(voice.includes(scenario.answer));
+    }
+    for (const i of [1, 2, 3]) {
+      assert.ok(voice.includes(`/media/hands-free-${i}-uk.png`));
+    }
+    assert.ok(!voice.includes("<video"), "media must wait for a visitor click");
     assert.equal((voice.match(/<details>/g) ?? []).length, 4);
     assert.ok(voice.includes(d.voiceLanding.pilotNote));
     assert.ok(!voice.includes("<audio"), "the example must not activate voice");

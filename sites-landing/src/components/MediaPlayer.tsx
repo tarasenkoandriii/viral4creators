@@ -4,6 +4,7 @@ export type Film = {
   src: string;
   poster: string;
   posterAvif?: string;
+  captions?: string;
   title: string;
   description: string;
 };
@@ -29,7 +30,9 @@ export function MediaPlayer({ items, play }: { items: Film[]; play: string }) {
                 autoPlay
                 preload="none"
                 aria-label={item.title}
-              />
+              >
+                {item.captions && <track kind="captions" src={item.captions} srcLang="uk" label="Українська" default />}
+              </video>
             ) : (
               <button
                 className="media-launch"

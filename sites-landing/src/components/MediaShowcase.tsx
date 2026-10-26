@@ -47,6 +47,17 @@ const copy = {
   },
 } as const;
 
+const voiceFilms = {
+  uk: ["Запитайте сайт голосом", "Повторювані запитання підтримки", "Помічник співробітника в адмінці"],
+  ru: ["Спросите сайт голосом", "Повторяющиеся вопросы поддержки", "Помощник сотрудника в админке"],
+  en: ["Ask the site by voice", "Repeated support questions", "An employee assistant in the admin area"],
+} as const;
+const voiceFilmNote = {
+  uk: "18–19 с · українська озвучка та субтитри. Ілюстрація сценарію, не запис живого інтерфейсу чи результат клієнта. Потрібні налаштування та перевірка для вашого сайту.",
+  ru: "18–19 с · украинская озвучка и субтитры. Иллюстрация сценария, не запись живого интерфейса или результат клиента. Нужны настройка и проверка для вашего сайта.",
+  en: "18–19 sec · Ukrainian audio and captions. A workflow illustration, not a live interface recording or client result. Requires setup and acceptance checks for your site.",
+} as const;
+
 export function MediaShowcase({
   locale,
   product,
@@ -59,6 +70,13 @@ export function MediaShowcase({
   const items =
     product === "voice"
       ? [
+          ...voiceFilms[locale].map((title, i) => ({
+            src: `/media/hands-free-${i + 1}-uk.mp4`,
+            poster: `/media/hands-free-${i + 1}-uk.png`,
+            captions: `/media/hands-free-${i + 1}-uk.vtt`,
+            title,
+            description: voiceFilmNote[locale],
+          })),
           {
             src: "/media/voice-concept.mp4",
             poster: "/media/voice-concept.webp",

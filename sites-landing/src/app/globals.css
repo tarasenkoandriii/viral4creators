@@ -1752,3 +1752,6 @@ thead th {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 40rem;
 }
+
+.voice-scenario-art { display:block; width:100%; height:auto; max-height:180px; }
+.voice-scenarios blockquote { margin:1rem 0; padding-left:1rem; border-left:3px solid var(--accent); font-weight:600; }

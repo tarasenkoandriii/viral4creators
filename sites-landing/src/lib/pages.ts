@@ -55,7 +55,7 @@ export interface PageDef {
 export const DOCS_LOCALES = ['uk', 'en'] as const satisfies readonly Locale[];
 
 export const PAGES: readonly PageDef[] = [
-  { key: 'hands-free', path: '/hands-free', updated: '2026-10-22', parent: 'home', og: 'assistant' },
+  { key: 'hands-free', path: '/hands-free', updated: '2026-10-26', parent: 'home', og: 'assistant' },
   { key: 'qa', path: '/qa', updated: '2026-10-22', parent: 'home', og: 'assistant' },
   { key: 'home', path: '', updated: '2026-10-22' },
   { key: 'assistant', path: '/assistant', updated: '2026-10-22', parent: 'home' },
