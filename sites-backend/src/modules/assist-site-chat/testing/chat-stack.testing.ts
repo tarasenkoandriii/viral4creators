@@ -292,14 +292,10 @@ export class FakeChatModel extends SiteChatModel {
       .filter((sent) => [...stems(sent)].some((x) => q.has(x)))
       .slice(0, 3);
     const body = (picked.length ? picked : sentences.slice(0, 1)).join(' ');
-    const note = /Знания сайта написаны на языке «([a-z]{2})»/.exec(system);
-    const tail = note
-      ? ` (Information on the site is in language: ${note[1]}.)`
-      : '';
     const actions = best.url
       ? `<<<actions>>>${JSON.stringify({ items: [{ kind: 'link', label: 'Детальніше', url: best.url }] })}`
       : '';
-    return `${body} [S${best.n}]${tail}${actions}`;
+    return `${body} [S${best.n}]${actions}`;
   }
 
   override async openStream(

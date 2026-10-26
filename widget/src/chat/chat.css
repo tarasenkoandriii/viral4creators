@@ -265,6 +265,7 @@ body {
 }
 .fb {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 2px;
   font-size: 12px;
@@ -428,6 +429,7 @@ body {
 }
 .spk {
   display: inline-flex;
+  gap: 6px;
   align-items: center;
 }
 /* Э6-тер: «Я вмію: …» под микрофоном (Р-72). */

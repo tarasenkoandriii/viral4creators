@@ -248,7 +248,10 @@ test('озвучка ответа: кнопка у ответа, звук из P
     timeout: 5_000,
   });
   await spk.click();
-  await spk.click(); // стоп, пока грузится/звучит
+  // Explicit cancel remains available while preparing; play cannot cancel itself.
+  await chat(page)
+    .getByRole('button', { name: 'Зупинити озвучення', exact: true })
+    .click();
   await expect(spk).toHaveAttribute('aria-pressed', 'false');
   await expect(spk).toHaveAttribute('aria-label', 'Озвучити відповідь');
   expect(csp).toEqual([]);
@@ -434,4 +437,39 @@ test('streaming Stop cancels capture and never creates fallback or another strea
   expect(sockets).toBe(1);
   expect(finals).toBe(0);
   expect(uploads).toEqual([]);
+});
+
+test('slow audio preparation stays visible and does not require repeated play taps', async ({
+  page,
+}) => {
+  const pk = await voiceSite({ voice: { ...VOICE, input: false } });
+  await open(page, pk);
+  await ask(page, 'Скільки коштує доставка?');
+  await waitAnswer(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requests = 0;
+  await page.route('**/widget/v1/tts', async (route) => {
+    requests++;
+    await held;
+    await route.continue();
+  });
+  await chat(page)
+    .getByRole('button', { name: 'Озвучити відповідь', exact: true })
+    .click();
+  const preparing = chat(page).getByRole('button', {
+    name: 'Готуємо озвучення…',
+    exact: true,
+  });
+  await expect(preparing).toBeVisible();
+  await expect(preparing).toBeDisabled();
+  await expect(
+    chat(page).getByRole('button', { name: 'Зупинити озвучення', exact: true })
+  ).toBeEnabled();
+  await expect.poll(() => requests).toBe(1);
+  release();
+  await expect(preparing).toHaveCount(0);
+  await expect.poll(async () => (await ttsOf(pk)).length).toBe(1);
 });

@@ -94,7 +94,7 @@ describe('buildSitePrompt — порядок, данные, недоверенн
     ]);
   });
 
-  it('язык ответа и оговорка — только когда база на другом языке', () => {
+  it('язык ответа сохраняется без раскрытия технического языка базы', () => {
     expect(p.system).not.toMatch(/Знания сайта написаны/);
     const en = buildSitePrompt({
       ...base,
@@ -102,7 +102,10 @@ describe('buildSitePrompt — порядок, данные, недоверенн
       knowledgeLang: 'uk',
     });
     expect(en.system).toMatch(/in English/);
-    expect(en.system).toMatch(/Знания сайта написаны на языке «uk»/);
+    expect(en.system).not.toMatch(
+      /Знания сайта написаны|в конце коротко оговорись/,
+    );
+    expect(en.system).toContain('Не добавляй технические оговорки');
   });
 
   it('сводка с инъекцией и заголовок страницы с инъекцией в промпт не идут', () => {

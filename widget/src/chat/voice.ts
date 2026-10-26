@@ -386,6 +386,11 @@ export class VoiceController {
     this.host.setUi({ phase: 'idle', level: 0 });
   }
 
+  /** Explicit cancellation while preparing, without stopping the microphone. */
+  cancelSpeech() {
+    this.stopSpeaking();
+  }
+
   private stopSpeaking() {
     this.playbackEpoch++;
     this.audioRequest?.abort();
@@ -498,7 +503,9 @@ export class VoiceController {
     const ui = this.host.ui();
     if (!ui.speak) return;
     const engine = this.engine;
-    if (ui.playing === messageId || ui.loading === messageId) {
+    // Repeated play taps while preparing must not cancel or bill another request.
+    if (ui.loading === messageId) return;
+    if (ui.playing === messageId) {
       return this.stopSpeaking();
     }
     if (!engine) {
