@@ -493,6 +493,22 @@ export class Executor {
       let peak: number | null = null;
       let tail = '';
       for (let i = 0; i < req.steps.length; i++) {
+        const stop = (await exists(controlPath(dir, CONTROL.cancel)))
+          ? 'canceled'
+          : Date.now() >= req.deadlineAt
+            ? 'timeout'
+            : null;
+        if (stop) {
+          return await finish({
+            outcome: stop,
+            failedStep: i,
+            exitCode: null,
+            signal: null,
+            cpuMs: cpuTotal,
+            peakRssKb: peak,
+            stderrTail: tail,
+          });
+        }
         state.stepIndex = i;
         state.outTimeSec = null;
         this.cpuBaseMs = cpuTotal;

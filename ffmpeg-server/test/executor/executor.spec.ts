@@ -293,6 +293,68 @@ describe('executor: функциональные сценарии', () => {
     });
   });
 
+  it.each(['canceled', 'timeout'] as const)(
+    '%s между стадиями не запускает следующий процесс',
+    async (outcome) => {
+      const plan = mustParse({
+        input_files: { src: 'https://inputs.test/a.mp4' },
+        output_files: ['final.mp4'],
+        ffmpeg_commands: [
+          '-i {{src}} -t 1 {{tmp.mp4}}',
+          '-i {{tmp.mp4}} -t 1 {{final.mp4}}',
+        ],
+      });
+      const a = await startPlan(h, plan, lib);
+      type StepResult = {
+        exitCode: number;
+        signal: null;
+        stop: null;
+        oom: boolean;
+        stderr: string;
+        cpuMs: number;
+        peakRssKb: number;
+      };
+      const runner = h.executor as unknown as {
+        runStep: () => Promise<StepResult>;
+      };
+      let clock: jest.SpyInstance | undefined;
+      const step = jest
+        .spyOn(runner, 'runStep')
+        .mockImplementation(async () => {
+          if (outcome === 'canceled') await h.client.cancel(a.attemptId);
+          else {
+            const expired = Date.now() + 200_000;
+            clock = jest.spyOn(Date, 'now').mockReturnValue(expired);
+          }
+          return {
+            exitCode: 0,
+            signal: null,
+            stop: null,
+            oom: false,
+            stderr: 'completed first stage',
+            cpuMs: 12,
+            peakRssKb: 34,
+          };
+        });
+      try {
+        const done = await runToDone(h, a.attemptId);
+        expect(done).toMatchObject({
+          outcome,
+          failedStep: 1,
+          exitCode: null,
+          cpuMs: 12,
+          peakRssKb: 34,
+          stderrTail: 'completed first stage',
+        });
+        expect(step).toHaveBeenCalledTimes(1);
+        expect(existsSync(join(a.dir, 'outputs/final.mp4'))).toBe(false);
+      } finally {
+        clock?.mockRestore();
+        step.mockRestore();
+      }
+    },
+  );
+
   it('повторный start той же попытки отклоняется', async () => {
     const plan = endless();
     const a = await startPlan(h, plan, lib);
