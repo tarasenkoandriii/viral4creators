@@ -81,7 +81,7 @@ import { releaseJobLock, tryAcquireJobLock } from '../../common/cron-job-lock';
 import { Prisma } from '@prisma/client';
 import {
   CANVAS,
-  planSlideshow,
+  planBoundedSlideshow,
 } from '../tutorial-runner/tutorial-video-assembly';
 import {
   buildTutorialCaptionsAss,
@@ -1009,7 +1009,7 @@ export class TutorialVideoVersionsService {
         );
         captionsUrl = url;
       }
-      const plan = planSlideshow(manifestSlides(m, seconds), {
+      const plan = planBoundedSlideshow(manifestSlides(m, seconds), {
         preamble: m.preamble,
         captionsUrl,
         motion: m.motion,

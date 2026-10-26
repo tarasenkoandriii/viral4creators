@@ -529,3 +529,23 @@ describe('Tutorial input profile compatibility', () => {
     );
   });
 });
+
+it('raising total download inputs cannot raise simultaneous command streams', () => {
+  const inputs = Object.fromEntries(
+    Array.from({ length: 21 }, (_, i) => [
+      'f' + i,
+      `https://inputs.test/${i}.png`,
+    ]),
+  );
+  const command =
+    Object.keys(inputs)
+      .map((k) => `-i {{${k}}}`)
+      .join(' ') + ' {{out.mp4}}';
+  expect(
+    parseJob(job([command], inputs), { ...PILOT_LIMITS, maxInputs: 64 }),
+  ).toMatchObject({
+    ok: false,
+    code: 'UNSUPPORTED_COMMAND',
+    message: expect.stringContaining('command inputs'),
+  });
+});

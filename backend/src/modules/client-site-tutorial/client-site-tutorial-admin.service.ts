@@ -47,7 +47,7 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
   CANVAS,
   narrationFrameSeconds,
-  planSlideshow,
+  planBoundedSlideshow,
   SlideshowFrame,
   SlideshowMotion,
   uniformFrames,
@@ -585,7 +585,7 @@ export class ClientSiteTutorialAdminService {
     // одобрения, и менять её картинку оператор ночной обучалки не
     // должен.
     const slides = uniformFrames(frameUrls);
-    const plan = planSlideshow(slides, {
+    const plan = planBoundedSlideshow(slides, {
       motion: 'none',
       preamble: this.preambleOf(row.preambleSnapshot),
     });
@@ -873,7 +873,7 @@ export class ClientSiteTutorialAdminService {
         seconds: f.baseSeconds,
         ...(f.speech ? { audioUrl: f.speech.url } : {}),
       }));
-      const plan = planSlideshow(slides, {
+      const plan = planBoundedSlideshow(slides, {
         preamble: this.preambleOf(row.preambleSnapshot),
         captionsUrl,
         motion: CLIENT_VOICED_MOTION,

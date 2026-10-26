@@ -163,7 +163,7 @@ import {
   evenFrameSeconds,
   narrationFrameSeconds,
   fingerprintRest,
-  planSlideshow,
+  planBoundedSlideshow,
   sameSlideshowContent,
   slideshowFingerprint,
   TUTORIAL_FRAME_SENSITIVITY,
@@ -741,7 +741,7 @@ export interface TutorialAssemblyPollResult {
 /**
  * Что именно будет звучать в ролике — один из трёх исходов §3/§3-бис
  * ТЗ. Размеченное объединение, а не «url плюс карта, что-нибудь из
- * двух заполнено»: варианты А и Б взаимоисключающие, `planSlideshow`
+ * двух заполнено»: варианты А и Б взаимоисключающие, `planBoundedSlideshow`
  * отвергает план, где есть оба, и тип обязан говорить то же самое,
  * что планировщик.
  */
@@ -902,7 +902,7 @@ export class TutorialScenarioRunnerService {
    *   правка), а второй тумблер к тому же решению ничего не
    *   добавляет.
    *
-   * Смешения нет: `planSlideshow` отвергает план, где есть и общая
+   * Смешения нет: `planBoundedSlideshow` отвергает план, где есть и общая
    * дорожка, и покадровая, — это два разных ответа на вопрос «что
    * звучит на кадре N».
    */
@@ -3422,7 +3422,7 @@ export class TutorialScenarioRunnerService {
           contentHash,
           // Метаданные ролика (заход 1, 06.10.2026) — для плеера
           // помощника и лендинга: размер холста (кадр приводится к нему
-          // планом `planSlideshow`), тема съёмки, когда и какой сборкой
+          // планом `planBoundedSlideshow`), тема съёмки, когда и какой сборкой
           // фронтенда сняты кадры. Постер дописывает опрос при `complete`.
           width: CANVAS.width,
           height: CANVAS.height,
@@ -3622,7 +3622,7 @@ export class TutorialScenarioRunnerService {
         );
       }
 
-      const plan = planSlideshow(slides, {
+      const plan = planBoundedSlideshow(slides, {
         voiceoverUrl: narration.mode === 'whole' ? narration.url : null,
         captionsUrl,
         motion,
@@ -4407,7 +4407,7 @@ export class TutorialScenarioRunnerService {
           // Размер холста — у строк, которые его не записали при
           // отправке: путь обучалки по сайту заказчика
           // (`client-site-tutorial-admin.service.ts`) собирает тем же
-          // `planSlideshow`, то есть в тот же `CANVAS`, и строки,
+          // `planBoundedSlideshow`, то есть в тот же `CANVAS`, и строки,
           // отправленные до заведения полей.
           ...(asset.width == null || asset.height == null
             ? { width: CANVAS.width, height: CANVAS.height }

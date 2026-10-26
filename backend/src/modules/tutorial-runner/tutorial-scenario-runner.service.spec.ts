@@ -104,7 +104,7 @@ afterEach(() => {
   // Было `clearAllMocks`: он стирает ВЫЗОВЫ, но не реализации, и
   // подмена, выставленная одним тестом, продолжала действовать во
   // всех следующих. Эта мина уже выстрелила на этапе A (спай на
-  // `planSlideshow` уронил чужой тест), поэтому чиним причину, а не
+  // `planBoundedSlideshow` уронил чужой тест), поэтому чиним причину, а не
   // очередное следствие. Нужны все три строки, они про разное:
   // `restoreAllMocks` возвращает настоящие реализации объектам,
   // подменённым через `jest.spyOn`; `resetAllMocks` сбрасывает
@@ -2184,7 +2184,7 @@ describe('TutorialScenarioRunnerService', () => {
         it('у каждого шага своя дорожка, а не одна на весь ролик', async () => {
           // Ради этого этап D и делался: вариант Б (§3-бис) вместо
           // варианта А. Общей дорожки в плане быть не должно —
-          // `planSlideshow` отвергает команду, где есть и то и
+          // `planBoundedSlideshow` отвергает команду, где есть и то и
           // другое.
           const { service, ffmpeg, ttsProvider } = narratedRun();
 
@@ -2958,9 +2958,9 @@ describe('TutorialScenarioRunnerService', () => {
             const { service } = narratedRun({
               settings: { 'postprod.tutorialMotion': 'on' },
             });
-            const real = assembly.planSlideshow;
+            const real = assembly.planBoundedSlideshow;
             jest
-              .spyOn(assembly, 'planSlideshow')
+              .spyOn(assembly, 'planBoundedSlideshow')
               .mockImplementation((frames, opts) => {
                 const plan = real(frames, opts);
                 return plan && { ...plan, motion: 'fade' as const };
@@ -3466,7 +3466,7 @@ describe('TutorialScenarioRunnerService', () => {
     });
 
     it('кадры не годятся для сборки — строка и кадры не остаются висеть', async () => {
-      // Ранний выход по `planSlideshow === null` происходил уже ПОСЛЕ
+      // Ранний выход по `planBoundedSlideshow === null` происходил уже ПОСЛЕ
       // заливки: без уборки это была бы та же сирота.
       const page = buildFakePage({ screenshot: true });
       const browser = {
@@ -3485,9 +3485,9 @@ describe('TutorialScenarioRunnerService', () => {
       // (`restoreAllMocks` + `resetAllMocks`), «Once» осталось как
       // выражение намерения.
       jest
-        .spyOn(assembly, 'planSlideshow')
+        .spyOn(assembly, 'planBoundedSlideshow')
         .mockReturnValueOnce(
-          null as unknown as ReturnType<typeof assembly.planSlideshow>,
+          null as unknown as ReturnType<typeof assembly.planBoundedSlideshow>,
         );
 
       await service.run();
@@ -3638,9 +3638,9 @@ describe('TutorialScenarioRunnerService', () => {
       const { service, prisma, ffmpeg } = build([SCENARIO_OK]);
       ffmpeg.configured.mockReturnValue(true);
       ffmpeg.submit.mockResolvedValue({ jobId: 'job-1', status: 'queued' });
-      const real = assembly.planSlideshow;
+      const real = assembly.planBoundedSlideshow;
       jest
-        .spyOn(assembly, 'planSlideshow')
+        .spyOn(assembly, 'planBoundedSlideshow')
         .mockImplementation((frames, opts) => {
           const plan = real(frames, opts);
           return plan && { ...plan, durationMs: 987_654 };

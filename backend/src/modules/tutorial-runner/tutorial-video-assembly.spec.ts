@@ -4,6 +4,7 @@ import {
   framesFromSteps,
   narrationFrameSeconds,
   planSlideshow,
+  planBoundedSlideshow,
   slideshowContentHash,
   slideshowFingerprint,
   sameSlideshowContent,
@@ -1367,5 +1368,128 @@ describe('slideshowFingerprint / sameSlideshowContent — кадры слича�
     const c = slideshowFingerprint([f(newLine)], 'a.mp3', null, 'none');
     expect(fingerprintRest(a)).toBe(fingerprintRest(c));
     expect(fingerprintRest('голый-sha')).toBeNull();
+  });
+});
+
+describe('bounded Tutorial assembly', () => {
+  const frames = (count: number, voiced = true) =>
+    Array.from({ length: count }, (_, stepIndex) => ({
+      stepIndex: stepIndex * 2,
+      url: url(stepIndex),
+      seconds: 1.7333333333333334,
+      ...(voiced
+        ? { audioUrl: `https://blob.example.com/voice${stepIndex}.mp3` }
+        : {}),
+    }));
+  it.each(SLIDESHOW_MOTIONS)(
+    '%s: 30 narrated frames stay in one bounded five-command job',
+    (motion) => {
+      const f = frames(30);
+      const opts = {
+        motion,
+        captionsUrl: 'https://blob.example.com/captions.ass',
+      };
+      const old = planSlideshow(f, opts)!;
+      const plan = planBoundedSlideshow(f, opts)!;
+      expect(plan.durationMs).toBe(old.durationMs);
+      expect(plan.motion).toBe(old.motion);
+      expect(plan.outputs).toEqual(old.outputs);
+      expect(plan.inputs).toEqual(old.inputs);
+      expect(plan.commands).toHaveLength(5);
+      for (const c of plan.commands)
+        expect(c.match(/-i /g)!.length).toBeLessThanOrEqual(20);
+      expect(
+        plan.commands
+          .slice(0, -1)
+          .every((c) => c.includes('-crf 0') && !c.includes('subtitles=')),
+      ).toBe(true);
+      expect(plan.commands.at(-1)).toContain('subtitles={{captions}}');
+      expect(plan.commands.at(-1)).not.toContain('perspective=');
+    },
+  );
+  it.each([9, 17, 25])(
+    '%i screens: a final one-screen part has an outv producer',
+    (count) => {
+      const plan = planBoundedSlideshow(frames(count), { motion: 'fade' })!;
+      const lastPart = plan.commands.at(-2)!;
+      expect(lastPart).toContain('concat=n=1:v=1:a=1[outv]');
+      expect(lastPart).not.toContain('xfade=');
+    },
+  );
+  it('maximum decorated plan has 62 source files and one final intro/caption pass', () => {
+    const pathname =
+      'brand-manifests/m1/preambles/0b6f3b8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b.mp4';
+    const preamble = {
+      version: 1 as const,
+      url: `https://store1.public.blob.vercel-storage.com/${pathname}`,
+      pathname,
+      seconds: 6.4,
+      locale: 'uk',
+      approvedAt: '2026-10-01T10:00:00Z',
+      manifestId: 'm1',
+      characterId: null,
+      imageUrl: null,
+      voiceId: null,
+      voiceProvider: null,
+    };
+    const opts = {
+      motion: 'fade' as const,
+      preamble,
+      captionsUrl: 'https://blob.example.com/captions.ass',
+    };
+    const f = frames(30);
+    const plan = planBoundedSlideshow(f, opts)!;
+    expect(Object.keys(plan.inputs)).toHaveLength(62);
+    expect(plan.commands.slice(0, -1).join(' ')).not.toContain('{{preamble}}');
+    expect(plan.commands.at(-1)).toContain('{{preamble}}');
+    expect(plan.durationMs).toBe(planSlideshow(f, opts)!.durationMs);
+  });
+  it('small plans remain byte-for-byte identical', () => {
+    for (const count of [1, 8])
+      expect(planBoundedSlideshow(frames(count), { motion: 'fade' })).toEqual(
+        planSlideshow(frames(count), { motion: 'fade' }),
+      );
+  });
+  it('whole narration appears only in the final command', () => {
+    const f = frames(30, false);
+    const opts = {
+      motion: 'fade' as const,
+      voiceoverUrl: 'https://blob.example.com/whole.mp3',
+    };
+    const plan = planBoundedSlideshow(f, opts)!;
+    expect(plan.commands.slice(0, -1).join(' ')).not.toContain('{{voiceover}}');
+    expect(plan.commands.at(-1)).toContain('{{voiceover}}');
+    expect(plan.durationMs).toBe(planSlideshow(f, opts)!.durationMs);
+  });
+  it('mixed silent and narrated parts preserve duration', () => {
+    const f = frames(30, false);
+    Object.assign(f[19], { audioUrl: 'https://blob.example.com/one.mp3' });
+    const opts = { motion: 'fade' as const };
+    expect(planBoundedSlideshow(f, opts)!.durationMs).toBe(
+      planSlideshow(f, opts)!.durationMs,
+    );
+  });
+  it('global zoom cutoff applies before partitioning', () => {
+    const f = frames(30).map((f) => ({ ...f, seconds: 10 }));
+    const plan = planBoundedSlideshow(f, { motion: 'fade+zoom' })!;
+    expect(plan.motion).toBe('fade');
+    expect(plan.commands.join(' ')).not.toContain('perspective=');
+  });
+  it('globally disabled overlap cannot reappear in a later part', () => {
+    const f = frames(30);
+    f[0].seconds = 0.1;
+    const opts = { motion: 'fade+zoom' as const };
+    const plan = planBoundedSlideshow(f, opts)!;
+    expect(plan.commands.join(' ')).not.toContain('xfade=');
+    expect(plan.durationMs).toBe(planSlideshow(f, opts)!.durationMs);
+  });
+  it('invalid or conflicting narration is rejected before producing parts', () => {
+    expect(planBoundedSlideshow([], { motion: 'none' })).toBeNull();
+    expect(
+      planBoundedSlideshow(frames(30), {
+        motion: 'none',
+        voiceoverUrl: 'https://blob.example.com/whole.mp3',
+      }),
+    ).toBeNull();
   });
 });

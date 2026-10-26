@@ -304,11 +304,13 @@ describe('одобрение запускает сборку — и только
     // кадры разной длины, и вторая формула разошлась бы молча, а
     // число читает человек («Длительность — около N с»).
     const { service, tutorialVideoAsset } = setup();
-    const real = assembly.planSlideshow;
-    jest.spyOn(assembly, 'planSlideshow').mockImplementation((frames, opts) => {
-      const plan = real(frames, opts);
-      return plan && { ...plan, durationMs: 987_654 };
-    });
+    const real = assembly.planBoundedSlideshow;
+    jest
+      .spyOn(assembly, 'planBoundedSlideshow')
+      .mockImplementation((frames, opts) => {
+        const plan = real(frames, opts);
+        return plan && { ...plan, durationMs: 987_654 };
+      });
 
     await service.approve('draft1', 'operator1');
 

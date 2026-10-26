@@ -885,8 +885,10 @@ export function slideshowContentHash(
  * плюс пауза минус переход, то есть под нож идёт только тишина хвоста
  * (пауза 0.6 с против перехода 0.3), а речь не режется никогда.
  */
-export function planSlideshow(
-  frames: readonly SlideshowFrame[],
+type PartFrame = SlideshowFrame & { clipName?: string; audioClipName?: string };
+
+function planSlideshowPart(
+  frames: readonly PartFrame[],
   opts: {
     preamble?: NarratorPreamble | null;
     outputName?: string;
@@ -897,6 +899,7 @@ export function planSlideshow(
     /** Движение (этап G). Обязательно и без умолчания — см.
      *  `SlideshowMotion`. */
     motion: SlideshowMotion;
+    transitionFramesOverride?: number;
   },
 ): SlideshowPlan | null {
   const preamble = opts.preamble ? parseNarratorPreamble(opts.preamble) : null;
@@ -936,14 +939,14 @@ export function planSlideshow(
   ) {
     return null;
   }
-  const voiced = frames.filter((f) => !!f.audioUrl);
+  const voiced = frames.filter((f) => !!f.audioUrl || !!f.audioClipName);
   if (voiced.length > 0 && voiceoverUrl) return null;
 
   const inputs: Record<string, string> = {};
   const inputArgs: string[] = [];
   const scaleFilters: string[] = [];
 
-  frames.forEach(({ url, seconds, stepIndex, pointer }, i) => {
+  frames.forEach(({ url, seconds, stepIndex, pointer, clipName }, i) => {
     // Ключ входа и метка потока — по номеру ШАГА: команду читает
     // человек, разбирая неудачную сборку, и пропавший кадр обязан
     // оставить дыру в нумерации, а не сдвинуть остальные — ровно как
@@ -967,7 +970,7 @@ export function planSlideshow(
     // вход. Расхождение между `[${i}:v]` и `[v${stepIndex}]` в одной
     // строке нарочное, а не опечатка.
     const key = `frame${stepIndex}`;
-    inputs[key] = url;
+    if (!clipName) inputs[key] = url;
     // `-framerate ${OUTPUT_FPS}` перед `-loop 1` — не украшение.
     // Без него ffmpeg берёт для PNG частоту входа 25 к/с, режет `-t`
     // по ней ВВЕРХ и выдаёт кадр длиннее заказанного: при `-t 2.7`
@@ -979,7 +982,9 @@ export function planSlideshow(
     // требует сверять его `ffprobe`, а не на глаз. Найдено аудитом
     // этапа B и измерено: 7.367 с при объявленных 7.300.
     inputArgs.push(
-      `-framerate ${OUTPUT_FPS} -loop 1 -t ${seconds} -i {{${key}}}`,
+      clipName
+        ? `-t ${seconds} -i {{${clipName}}}`
+        : `-framerate ${OUTPUT_FPS} -loop 1 -t ${seconds} -i {{${key}}}`,
     );
     // Приведение к ОБЩЕМУ холсту, а не просто к чётным сторонам.
     //
@@ -996,13 +1001,14 @@ export function planSlideshow(
     // холста без обрезки, `pad` дополняет чёрным по центру. Кадр
     // никогда не растягивается: пропорции экрана важнее заполнения
     // холста, растянутый интерфейс выглядит поломкой.
-    const zoom = motion === 'fade+zoom' ? `,${zoomFilter(seconds)}` : '';
+    const zoom =
+      motion === 'fade+zoom' && !clipName ? `,${zoomFilter(seconds)}` : '';
     if (!pointer) {
       scaleFilters.push(
         `[${i}:v]scale=${CANVAS.width}:${CANVAS.height}:` +
           `force_original_aspect_ratio=decrease,` +
           `pad=${CANVAS.width}:${CANVAS.height}:(ow-iw)/2:(oh-ih)/2,` +
-          `setsar=1${zoom}[v${stepIndex}]`,
+          `setsar=1${clipName ? `,fps=${OUTPUT_FPS},settb=AVTB,setpts=PTS-STARTPTS` : ''}${zoom}[v${stepIndex}]`,
       );
       return;
     }
@@ -1030,10 +1036,14 @@ export function planSlideshow(
     );
   });
 
-  const overlap = transitionFrames(frames, motion);
+  const timelineMotion = opts.transitionFramesOverride === 0 ? 'none' : motion;
+  const overlap =
+    frames.length < 2
+      ? 0
+      : (opts.transitionFramesOverride ?? transitionFrames(frames, motion));
   // Сетка времени — ОДНА на картинку, звук, подписи и длительность:
   // та же функция, по которой вызывающий построил `.ass`.
-  const spans = frameSpansSeconds(frames, motion);
+  const spans = frameSpansSeconds(frames, timelineMotion);
 
   // Звуковые входы идут ПОСЛЕ всех кадров — нумерацию входов ведёт
   // ffmpeg по порядку `-i`, и вставить mp3 между кадрами значило бы
@@ -1073,12 +1083,15 @@ export function planSlideshow(
       SAMPLES_PER_FRAME,
   );
   if (voiced.length > 0) {
-    for (const [i, { stepIndex, audioUrl }] of frames.entries()) {
+    for (const [
+      i,
+      { stepIndex, audioUrl, audioClipName },
+    ] of frames.entries()) {
       const seconds = onGrid[i];
-      if (audioUrl) {
+      if (audioUrl || audioClipName) {
         const key = `voice${stepIndex}`;
-        inputs[key] = audioUrl;
-        inputArgs.push(`-i {{${key}}}`);
+        if (audioUrl && !audioClipName) inputs[key] = audioUrl;
+        inputArgs.push(`-i {{${audioClipName ?? key}}}`);
         // `apad` + `atrim` вместо «как есть»: сегмент обязан длиться
         // РОВНО столько же, сколько его кадр. Реплика короче кадра
         // (кадр = реплика + пауза) — `apad` дотягивает тишиной;
@@ -1169,7 +1182,7 @@ export function planSlideshow(
     }
   }
 
-  const durationMs = slideshowDurationMs(frames, motion);
+  const durationMs = slideshowDurationMs(frames, timelineMotion);
   const totalFrames = Math.round((spans.at(-1)?.end ?? 0) * OUTPUT_FPS);
   const parts = [...scaleFilters, ...audioFilters, ...joins];
   const maps = ['-map "[outv]"'];
@@ -1424,4 +1437,67 @@ export function sameSlideshowContent(
     if (t.startsWith('raw:') || u.startsWith('raw:')) return t === u;
     return !hasChanged(t, u, sensitivity);
   });
+}
+
+type SlideshowOptions = Omit<
+  Parameters<typeof planSlideshowPart>[1],
+  'transitionFramesOverride'
+>;
+
+/** Original single-command contract, retained for existing consumers and fingerprints. */
+export function planSlideshow(
+  frames: readonly SlideshowFrame[],
+  opts: SlideshowOptions,
+): SlideshowPlan | null {
+  return planSlideshowPart(frames, opts);
+}
+
+/** One durable FFmpeg job with bounded, sequential commands.
+ * Parts remain private workspace files; final composition preserves the global
+ * timing grid and applies captions, whole narration and preamble exactly once.
+ */
+export function planBoundedSlideshow(
+  frames: readonly SlideshowFrame[],
+  opts: SlideshowOptions,
+): SlideshowPlan | null {
+  const original = planSlideshow(frames, opts);
+  if (!original || frames.length <= 8) return original;
+  const commands: string[] = [];
+  const inputs: Record<string, string> = {};
+  const clips: PartFrame[] = [];
+  const prefix = original.outputName.startsWith('tutorial-part-')
+    ? 'tutorial-stage-'
+    : 'tutorial-part-';
+  const overlap = transitionFrames(frames, original.motion);
+  for (let start = 0; start < frames.length; start += 8) {
+    const name = `${prefix}${start / 8}.mp4`;
+    const partFrames = frames.slice(start, start + 8);
+    const part = planSlideshowPart(partFrames, {
+      motion: original.motion,
+      transitionFramesOverride: overlap,
+      outputName: name,
+    });
+    if (!part) return null;
+    Object.assign(inputs, part.inputs);
+    // Lossless intermediates avoid a second lossy encode of screenshots/text.
+    commands.push(
+      ...part.commands.map((c) => c.replace(`-crf ${OUTPUT_CRF}`, '-crf 0')),
+    );
+    clips.push({
+      stepIndex: partFrames[partFrames.length - 1].stepIndex,
+      url: '',
+      seconds: part.durationMs / 1000,
+      clipName: name,
+      ...(partFrames.some((f) => !!f.audioUrl) ? { audioClipName: name } : {}),
+    });
+  }
+  const final = planSlideshowPart(clips, {
+    ...opts,
+    motion: original.motion,
+    transitionFramesOverride: overlap,
+  });
+  if (!final) return null;
+  Object.assign(inputs, final.inputs);
+  commands.push(...final.commands);
+  return { ...original, inputs, commands };
 }

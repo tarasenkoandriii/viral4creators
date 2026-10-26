@@ -643,3 +643,29 @@ describe('аудит SEC FF-SEC-01: вторая линия в executor (в об
     ).toMatch(/not allowed/);
   });
 });
+
+describe('bounded Tutorial in one executor attempt', () => {
+  it.each(['none', 'fade', 'fade+zoom', 'whole', 'mixed', 'decorated'])(
+    '%s: parts produce one timed final video',
+    async (motion) => {
+      const e = entry(`tutorial-runner/bounded-${motion}`);
+      const plan = mustParse(e.request);
+      expect(plan.steps).toHaveLength(3);
+      expect(plan.intermediates).toHaveLength(2);
+      const a = await startPlan(h, plan, lib, { text: e.textInputs });
+      const done = await runToDone(h, a.attemptId);
+      if (done.outcome !== 'succeeded') throw new Error(done.stderrTail);
+      const result = await verifyOutputs(a.dir, plan.outputs, PILOT_LIMITS);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const probe = result.files[0].probe!;
+      const expected =
+        motion === 'none' ? 13.5 : motion === 'decorated' ? 17.5 : 11.1;
+      expect(Math.abs(probe.durationSec! - expected)).toBeLessThanOrEqual(
+        1 / 30,
+      );
+      expect(probe.streams.some((s) => s.type === 'audio')).toBe(true);
+      expect(result.files).toHaveLength(1);
+    },
+  );
+});

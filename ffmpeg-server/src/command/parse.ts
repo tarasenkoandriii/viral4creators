@@ -552,6 +552,9 @@ function parseCommand(
     );
   }
   if (outputs.length === 0) throw unsupported('command has no output');
+  // Total download files may be raised for sequential Tutorial plans, but
+  // never open more than the original 20 streams in a single process.
+  if (inputs.length > 20) throw unsupported('too many command inputs (max 20)');
   // FF-SEC-03: зацикленный вход (`-loop 1`, `-stream_loop` ≠ 0) — только с
   // конечной длительностью: `-t` у самого входа или `-t`/`-frames:v` у
   // каждого выхода команды (значения уже ограничены профилем).

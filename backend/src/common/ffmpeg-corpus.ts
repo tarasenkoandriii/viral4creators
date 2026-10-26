@@ -22,6 +22,7 @@ import { buildSrt, SUBTITLE_THEME_FORCE_STYLE } from './subtitles';
 import { buildCardsAss } from './greeting-cards';
 import {
   planSlideshow,
+  planBoundedSlideshow,
   uniformFrames,
   SlideshowFrame,
 } from '../modules/tutorial-runner/tutorial-video-assembly';
@@ -498,6 +499,33 @@ function tutorialEntries(): FfmpegCorpusEntry[] {
   const frameUrl = (i: number) =>
     `${BLOB}/tutorial-video-frames/a1/frame-${i}.png`;
 
+  // Sequential bounded planner: generated commands, never rewritten in fixtures.
+  for (const motion of ['none', 'fade', 'fade+zoom'] as const) {
+    const frames = Array.from({ length: 9 }, (_, stepIndex) => ({
+      stepIndex,
+      url: frameUrl(stepIndex),
+      seconds: 1.5,
+      audioUrl: `${BLOB}/voice/${stepIndex}.mp3`,
+    }));
+    const plan = planBoundedSlideshow(frames, { motion });
+    if (!plan) throw new Error('corpus: bounded plan is null');
+    out.push(
+      entry({
+        id: `tutorial-runner/bounded-${motion}`,
+        product: 'tutorial-runner',
+        source:
+          'backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planBoundedSlideshow',
+        callSite:
+          'backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly',
+        note: 'Two lossless screen groups and one final composition in a single durable job',
+        live: true,
+        inputs: plan.inputs,
+        outputs: plan.outputs,
+        commands: plan.commands,
+      }),
+    );
+  }
+
   // Обучалка по сайту заказчика, немой путь (uniformFrames + 'none').
   const silentFrames = uniformFrames([0, 1, 2].map(frameUrl));
   const silent = planSlideshow(silentFrames, { motion: 'none' });
@@ -773,6 +801,50 @@ function tutorialEntries(): FfmpegCorpusEntry[] {
       commands: mixedPlan.commands,
     }),
   );
+  for (const kind of ['whole', 'mixed', 'decorated'] as const) {
+    const frames: SlideshowFrame[] = Array.from(
+      { length: 9 },
+      (_, stepIndex) => ({
+        stepIndex,
+        url: frameUrl(stepIndex),
+        seconds: 1.5,
+        ...(kind === 'decorated' || (kind === 'mixed' && stepIndex === 8)
+          ? { audioUrl: `${BLOB}/voice/${stepIndex}.mp3` }
+          : {}),
+      }),
+    );
+    const ass = buildTutorialCaptionsAss(
+      frames.map((f) => ({
+        seconds: f.seconds,
+        narration: 'Перевірка синхронізації',
+      })),
+      'fade',
+    );
+    const plan = planBoundedSlideshow(frames, {
+      motion: 'fade',
+      ...(kind === 'whole' ? { voiceoverUrl: `${BLOB}/whole.mp3` } : {}),
+      ...(kind === 'decorated'
+        ? { preamble, captionsUrl: `${BLOB}/captions.ass` }
+        : {}),
+    });
+    if (!plan) throw new Error('corpus: bounded variant is null');
+    out.push(
+      entry({
+        id: `tutorial-runner/bounded-${kind}`,
+        product: 'tutorial-runner',
+        source:
+          'backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planBoundedSlideshow',
+        callSite:
+          'backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly',
+        note: 'Bounded composition: whole narration, silent part or final preamble/captions',
+        live: true,
+        inputs: plan.inputs,
+        outputs: plan.outputs,
+        commands: plan.commands,
+        textInputs: kind === 'decorated' ? { captions: ass } : {},
+      }),
+    );
+  }
   return out;
 }
 
