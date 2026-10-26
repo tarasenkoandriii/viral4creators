@@ -505,6 +505,18 @@ describe('аудит SEC: регрессии FF-SEC-01/02/03', () => {
 });
 
 describe('Tutorial input profile compatibility', () => {
+  it('honours a lowered client limit without changing the ceiling', () => {
+    const body = job(['-i {{a}} {{out.mp4}}'], {
+      a: 'https://inputs.test/a.png',
+      b: 'https://inputs.test/b.png',
+    });
+    expect(parseJob(body, { ...PILOT_LIMITS, maxInputs: 1 })).toMatchObject({
+      ok: false,
+      code: 'UNSUPPORTED_COMMAND',
+    });
+    expect(parseJob(body, PILOT_LIMITS).ok).toBe(true);
+  });
+
   it.each([21, 31, 62])('rejects %i files before execution', (count) => {
     const inputs = Object.fromEntries(
       Array.from({ length: count }, (_, i) => [
