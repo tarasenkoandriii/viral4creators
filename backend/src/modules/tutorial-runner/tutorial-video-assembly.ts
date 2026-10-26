@@ -1498,6 +1498,16 @@ export function planBoundedSlideshow(
   });
   if (!final) return null;
   Object.assign(inputs, final.inputs);
-  commands.push(...final.commands);
+  // The existing audio pad protects the last video frame. With an intro,
+  // AAC can leave a full extra packet in the container after video ends.
+  // Bound the final mux to the same frame grid used by the public duration.
+  commands.push(
+    ...final.commands.map((command) =>
+      command.replace(
+        ' -movflags +faststart ',
+        ` -t ${gridSeconds(original.durationMs / 1000)} -movflags +faststart `,
+      ),
+    ),
+  );
   return { ...original, inputs, commands };
 }
