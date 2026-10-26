@@ -48,7 +48,14 @@ export function speechPhrases(text: string): string[] {
   for (const sentence of sentences) {
     for (const word of sentence.trim().split(/\s+/u)) {
       const limit = parts.length === 0 ? 180 : 240;
-      if (pending && pending.length + 1 + word.length > limit) {
+      // Keep grouped amounts/ranges together (for example 1 000 or 10 – 15).
+      const numericContinuation =
+        /[\d–—-]$/.test(pending) && /^[\d–—-]/.test(word);
+      if (
+        pending &&
+        pending.length + 1 + word.length > limit &&
+        !numericContinuation
+      ) {
         parts.push(pending);
         pending = '';
       }

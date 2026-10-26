@@ -32,6 +32,12 @@ describe('phrase playback', () => {
     expect(parts.join(' ')).toBe(text);
     expect(parts[1]).toContain('10.5');
   });
+  it('never cuts a grouped monetary amount at a word boundary', () => {
+    const prefix = 'a'.repeat(177);
+    const parts = speechPhrases(prefix + ' 1 000 TON.');
+    expect(parts[0]).toContain('1 000');
+    expect(parts.join(' ')).toBe(prefix + ' 1 000 TON.');
+  });
   it('bounds a long first sentence without losing content or creating excessive calls', () => {
     const text = 'Довга фраза без крапки '
       .repeat(70)
