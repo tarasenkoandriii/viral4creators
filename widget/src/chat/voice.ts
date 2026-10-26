@@ -578,9 +578,10 @@ export class VoiceController {
           : null;
       let ended = false;
       try {
-        engine.play(bytes, () => {
+        engine.play(bytes, (failed) => {
           if (ended || !active()) return;
           ended = true;
+          if (failed) return fail(new Error('audio playback failed'));
           if (!next) {
             this.host.setUi({ loading: null, playing: null });
             if (this.audioRequest === request) this.audioRequest = null;

@@ -69,6 +69,7 @@ export function createVoice(): VoiceEngine {
     }
     if (element) {
       element.onended = null;
+      element.onerror = null;
       element.pause();
       element = null;
     }
@@ -268,7 +269,7 @@ export function createVoice(): VoiceEngine {
       }
     },
 
-    play(bytes: ArrayBuffer, onEnd: () => void) {
+    play(bytes: ArrayBuffer, onEnd: (failed?: boolean) => void) {
       stopPlayback();
       const epoch = playbackEpoch;
       const viaElement = () => {
@@ -284,14 +285,20 @@ export function createVoice(): VoiceEngine {
             stopPlayback();
             onEnd();
           };
+          el.onerror = () => {
+            if (epoch !== playbackEpoch) return;
+            stopPlayback();
+            onEnd(true);
+          };
           el.src = elementUrl;
           el.play().catch(() => {
             if (epoch !== playbackEpoch) return;
             stopPlayback();
-            onEnd();
+            onEnd(true);
           });
         } catch {
-          onEnd();
+          stopPlayback();
+          onEnd(true);
         }
       };
       if (!player) return viaElement();
@@ -300,16 +307,21 @@ export function createVoice(): VoiceEngine {
         bytes.slice(0),
         (decoded) => {
           if (epoch !== playbackEpoch) return;
-          const node = ctx.createBufferSource();
-          node.buffer = decoded;
-          node.connect(ctx.destination);
-          node.onended = () => {
-            if (epoch !== playbackEpoch || source !== node) return;
-            source = null;
-            onEnd();
-          };
-          source = node;
-          node.start();
+          try {
+            const node = ctx.createBufferSource();
+            node.buffer = decoded;
+            node.connect(ctx.destination);
+            node.onended = () => {
+              if (epoch !== playbackEpoch || source !== node) return;
+              source = null;
+              onEnd();
+            };
+            source = node;
+            node.start();
+          } catch {
+            stopPlayback();
+            onEnd(true);
+          }
         },
         () => viaElement()
       );

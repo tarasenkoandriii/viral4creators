@@ -55,8 +55,8 @@ export interface VoiceEngine {
   ): Recording;
   /** Разблокировать воспроизведение — синхронно в жесте пользователя. */
   unlock(): void;
-  /** Проиграть mp3/wav ответа; `onEnd` — конец или ошибка. */
-  play(bytes: ArrayBuffer, onEnd: () => void): void;
+  /** Проиграть mp3/wav ответа; `onEnd` — конец; true означает ошибку воспроизведения. */
+  play(bytes: ArrayBuffer, onEnd: (failed?: boolean) => void): void;
   stopPlayback(): void;
 }
 

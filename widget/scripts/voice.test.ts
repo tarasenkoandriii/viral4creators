@@ -127,7 +127,7 @@ class FakeEngine implements VoiceEngine {
   unlocked = 0;
   played: ArrayBuffer[] = [];
   stops = 0;
-  playEnd: (() => void) | null = null;
+  playEnd: ((failed?: boolean) => void) | null = null;
   canRecord() {
     return true;
   }
@@ -167,7 +167,7 @@ class FakeEngine implements VoiceEngine {
   unlock() {
     this.unlocked++;
   }
-  play(b: ArrayBuffer, onEnd: () => void) {
+  play(b: ArrayBuffer, onEnd: (failed?: boolean) => void) {
     this.played.push(b);
     this.playEnd = onEnd;
   }
@@ -864,6 +864,38 @@ async function main() {
     assert.ok(h.notices.length > 0);
     g.fetch = original;
   }
+  // Playback rejection is not a natural end: never synthesize the remaining queue.
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const original = g.fetch;
+    let calls = 0;
+    g.fetch = async () => {
+      const index = calls++;
+      return new Response(new Uint8Array([index + 1]), {
+        headers: {
+          'X-Assist-Tts-Parts': '4',
+          'X-Assist-Tts-Part': String(index),
+        },
+      });
+    };
+    h.vc.speak('blocked-audio');
+    await tick();
+    await tick();
+    h.engine.playEnd?.(true);
+    await tick();
+    await tick();
+    assert.equal(
+      calls,
+      2,
+      'only the bounded look-ahead may have been dispatched'
+    );
+    assert.equal(h.engine.played.length, 1);
+    assert.equal(h.ui.playing, null);
+    assert.ok(h.notices.length > 0);
+    g.fetch = original;
+  }
   // Stop/start of the SAME message: an older response must not play twice (ABA).
   {
     const h = harness();
@@ -885,6 +917,30 @@ async function main() {
     g.fetch = originalFetch;
     assert.equal(h.engine.played.length, 1);
     assert.equal(h.engine.played[0].byteLength, 8);
+  }
+  // HTML audio autoplay rejection is reported as an error, not a normal end.
+  {
+    const original = g.Audio;
+    let ended = 0;
+    let failed: boolean | undefined;
+    g.Audio = class {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      src = '';
+      pause() {}
+      play() {
+        return Promise.reject(new Error('NotAllowedError'));
+      }
+    };
+    const engine = createVoice();
+    engine.play(new ArrayBuffer(8), (error) => {
+      ended++;
+      failed = error;
+    });
+    await tick();
+    assert.equal(ended, 1);
+    assert.equal(failed, true);
+    g.Audio = original;
   }
   // WebAudio decoding is asynchronous too: Stop invalidates its pending callback.
   {
