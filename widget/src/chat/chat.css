@@ -160,6 +160,10 @@ body {
   color: var(--v4c-on, #fff);
 }
 /* Э3: кто ответил — «ИИ» только у модели, «Оператор» — у человека. */
+.who.ai {
+  align-self: flex-start;
+  width: fit-content;
+}
 .who {
   margin: 0 0 2px;
   font-size: 11px;

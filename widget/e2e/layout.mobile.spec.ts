@@ -6,7 +6,17 @@
  * высоты снизу; bubble — как на десктопе; visualViewport (клавиатура).
  */
 import { test, expect } from '@playwright/test';
-import { chat, launcher, mock, newPk, panel, site, stand } from './fixtures';
+import {
+  ask,
+  chat,
+  launcher,
+  mock,
+  newPk,
+  panel,
+  site,
+  stand,
+  waitAnswer,
+} from './fixtures';
 
 test.beforeEach(async () => {
   await mock('reset');
@@ -138,4 +148,23 @@ test('V4CAssist(hide) при открытом окне — окно закрыт
   );
   await expect(launcher(page)).toBeVisible();
   await expect(panel(page)).toBeHidden();
+});
+
+test('AI label remains a compact badge above the mobile answer', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.goto(stand('example.localhost', { pk }));
+  await launcher(page).tap();
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+  await ask(page, 'Какая гарантия?');
+  await waitAnswer(page);
+  const label = chat(page).locator('.msg.bot .who.ai').last();
+  const badge = await label.boundingBox();
+  const message = await chat(page).locator('.msg.bot').last().boundingBox();
+  expect(badge).not.toBeNull();
+  expect(message).not.toBeNull();
+  expect(badge!.width).toBeLessThan(60);
+  expect(badge!.width).toBeLessThan(message!.width / 2);
 });

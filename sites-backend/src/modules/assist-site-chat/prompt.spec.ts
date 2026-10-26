@@ -235,6 +235,13 @@ describe('правила без модели и язык', () => {
     expect(answerLangOf('Дякую', null)).toBe('uk');
     expect(answerLangOf('Спасибо', null)).toBe('ru');
     expect(answerLangOf('Thanks', null)).toBe('en');
+    expect(answerLangOf('Какую сеть использует Raffle Market?', 'uk')).toBe(
+      'ru',
+    );
+    expect(answerLangOf('Спасибо', 'uk')).toBe('ru');
+    expect(answerLangOf('Де це зараз?', 'ru')).toBe('uk');
+    expect(answerLangOf('Raffle Market', 'uk')).toBe('en');
+    expect(answerLangOf('Привет', 'uk')).toBe('uk');
   });
 });
 

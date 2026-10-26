@@ -13,12 +13,21 @@ export type ChatLang = 'uk' | 'ru' | 'en';
 const UK_WORDS =
   /(?:^|[^\p{L}])(?:дякую|будь ласка|що|чи|де|коли|та|це|вже|зараз|тепер|якщо|бо)(?=$|[^\p{L}])/iu;
 
+/** Русские слова, однозначные даже без ы/э/ё/ъ. */
+const RU_WORDS =
+  /(?:^|[^\p{L}])(?:какую|какая|какой|какие|использует|использовать|спасибо|пожалуйста|сейчас|почему|где|когда|что|это)(?=$|[^\p{L}])/iu;
+
 /** Язык ответа: язык вопроса; короткое «привет» — подсказка интерфейса. */
 export function answerLangOf(
   question: string,
   uiLang: string | null,
 ): ChatLang {
   const hint = uiLang?.slice(0, 2).toLowerCase() ?? null;
+  // UI is only a fallback: an explicit question must keep its own language.
+  if (!/[іїєґыэёъ]/i.test(question)) {
+    if (UK_WORDS.test(question)) return 'uk';
+    if (RU_WORDS.test(question)) return 'ru';
+  }
   const lang = questionLang(question, hint);
   if (lang === 'ru' && !/[ыэёъ]/i.test(question) && UK_WORDS.test(question)) {
     return 'uk';
