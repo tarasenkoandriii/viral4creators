@@ -165,6 +165,7 @@ export class PlatformAdminController {
       'blocked',
       'dailyCapUsd',
       'voiceDailyCapUsd',
+      'voiceAutoSpeak',
       'voiceControlPlansPerDay',
     ]);
     if (
@@ -221,8 +222,15 @@ export class PlatformAdminController {
         HttpStatus.BAD_REQUEST,
       );
     }
+    if (o.voiceAutoSpeak !== undefined && typeof o.voiceAutoSpeak !== 'boolean')
+      throw adminError(
+        'BAD_REQUEST',
+        'voiceAutoSpeak — boolean',
+        HttpStatus.BAD_REQUEST,
+      );
     return this.admin.setSite(id(siteId), actor, {
       blocked: o.blocked as boolean | undefined,
+      voiceAutoSpeak: o.voiceAutoSpeak as boolean | undefined,
       dailyCapUsd: o.dailyCapUsd as number | null | undefined,
       voiceDailyCapUsd: o.voiceDailyCapUsd as number | null | undefined,
       voiceControlPlansPerDay: o.voiceControlPlansPerDay as

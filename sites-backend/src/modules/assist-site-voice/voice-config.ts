@@ -20,6 +20,8 @@ export interface VoiceConfig {
   input: boolean;
   /** Кнопка «озвучить ответ» (§4.10 «Вывод»). */
   output: boolean;
+  /** Admin switch: eager first phrase and voice-question autoplay; defaults on. */
+  autoSpeak?: boolean;
   /** Голос озвучки из справочника провайдера; null — голос по умолчанию. */
   voiceId: string | null;
 }
@@ -44,7 +46,7 @@ export function parseVoiceConfig(input: unknown): VoiceConfigParse {
   if (!isObj(input)) return { ok: false, errors: [{ path: '', code: 'type' }] };
   const errors: Array<{ path: string; code: string }> = [];
   for (const k of Object.keys(input)) {
-    if (!['schema', 'input', 'output', 'voiceId'].includes(k)) {
+    if (!['schema', 'input', 'output', 'voiceId', 'autoSpeak'].includes(k)) {
       errors.push({ path: k, code: 'unknown' });
     }
   }
@@ -54,6 +56,8 @@ export function parseVoiceConfig(input: unknown): VoiceConfigParse {
   for (const k of ['input', 'output'] as const) {
     if (typeof input[k] !== 'boolean') errors.push({ path: k, code: 'type' });
   }
+  if (input.autoSpeak !== undefined && typeof input.autoSpeak !== 'boolean')
+    errors.push({ path: 'autoSpeak', code: 'type' });
   const v = input.voiceId;
   if (
     v !== undefined &&
@@ -69,6 +73,9 @@ export function parseVoiceConfig(input: unknown): VoiceConfigParse {
       schema: 1,
       input: input.input as boolean,
       output: input.output as boolean,
+      ...(typeof input.autoSpeak === 'boolean'
+        ? { autoSpeak: input.autoSpeak }
+        : {}),
       voiceId: typeof v === 'string' ? v : null,
     },
   };

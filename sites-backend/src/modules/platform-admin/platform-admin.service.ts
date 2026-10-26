@@ -25,6 +25,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { voiceConfigOf } from '../assist-site-voice/voice-config';
 import {
   WIDGET_SETTINGS_KEY,
   parseWidgetSettings,
@@ -280,6 +281,7 @@ export class PlatformAdmin {
         operatorBlockedAt: true,
         dailyCapMicroUsd: true,
         voiceDailyCapMicroUsd: true,
+        voiceConfig: true,
         widgetVersion: true,
         site: {
           select: {
@@ -349,6 +351,7 @@ export class PlatformAdmin {
         dailyCapUsd:
           s.dailyCapMicroUsd === null ? null : s.dailyCapMicroUsd / MICRO,
         widgetVersion: s.widgetVersion,
+        voiceAutoSpeak: voiceConfigOf(s.voiceConfig).autoSpeak !== false,
         voiceDailyCapUsd:
           s.voiceDailyCapMicroUsd === null
             ? null
@@ -455,6 +458,7 @@ export class PlatformAdmin {
       blocked?: boolean;
       dailyCapUsd?: number | null;
       voiceDailyCapUsd?: number | null;
+      voiceAutoSpeak?: boolean;
       /** Э6-бис (г), решение владельца п.2: потолок планов голосового управления в сутки. */
       voiceControlPlansPerDay?: number | null;
     },
@@ -480,10 +484,18 @@ export class PlatformAdmin {
         body.voiceDailyCapUsd === null
           ? null
           : Math.round(body.voiceDailyCapUsd * MICRO);
-    await this.prisma.assistSite.update({ where: { siteId }, data });
+    if (Object.keys(data).length)
+      await this.prisma.assistSite.update({ where: { siteId }, data });
+    if (body.voiceAutoSpeak !== undefined)
+      await this.prisma.$executeRaw`
+        UPDATE assist_sites
+        SET "voiceConfig" = jsonb_set(
+          COALESCE("voiceConfig", '{"schema":1,"input":false,"output":false,"voiceId":null}'::jsonb),
+          '{autoSpeak}', ${JSON.stringify(body.voiceAutoSpeak)}::jsonb, true)
+        WHERE "siteId" = ${siteId}`;
     await this.log(
       actor,
-      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : body.voiceControlPlansPerDay !== undefined ? `vc-plans:${body.voiceControlPlansPerDay ?? 'plan'}` : body.voiceDailyCapUsd !== undefined ? 'voice-cap' : 'cap'}`,
+      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : body.voiceControlPlansPerDay !== undefined ? `vc-plans:${body.voiceControlPlansPerDay ?? 'plan'}` : body.voiceAutoSpeak !== undefined ? 'voice-auto-speak' : body.voiceDailyCapUsd !== undefined ? 'voice-cap' : 'cap'}`,
       siteId,
     );
     return this.account(row.accountId, actor);

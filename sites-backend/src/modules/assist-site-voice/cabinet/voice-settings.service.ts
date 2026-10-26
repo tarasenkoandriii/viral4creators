@@ -120,6 +120,8 @@ export class VoiceSettingsService {
     // Включить можно только на тарифе с голосом; оставить включённым после
     // смены тарифа и выключить — всегда (выключение безопасно).
     const prev = voiceConfigOf(row.voiceConfig);
+    if (p.config.autoSpeak === undefined && prev.autoSpeak !== undefined)
+      p.config.autoSpeak = prev.autoSpeak;
     const turningOn =
       (p.config.input && !prev.input) || (p.config.output && !prev.output);
     if (turningOn) {

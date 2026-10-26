@@ -274,6 +274,7 @@ export class WidgetPublicConfigService {
               ? { streaming: true }
               : {}),
             output: a.output,
+            autoSpeak: a.config.autoSpeak !== false,
             maxRecordMs: VOICE_DEFAULTS.maxRecordMs,
             minSpeechMs: VOICE_DEFAULTS.minSpeechMs,
             endSilenceMs: VOICE_DEFAULTS.endSilenceMs,
