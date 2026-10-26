@@ -310,5 +310,12 @@ export const testSessionRef = (): string =>
   `sr_${[...randomBytes(20)].map((b) => String.fromCharCode(97 + (b % 26))).join('')}`;
 
 /** Случайный IP источника (документационные сети), чтобы окна не пересекались. */
-export const randomIp = (): string =>
-  `198.51.100.${1 + (randomBytes(1)[0] % 250)}`;
+// Each call represents a fresh visitor. Random selection from 250 addresses
+// collided with earlier rate-limit tests in the same product and caused 429s.
+// Benchmark-only address space; never sent to a real external service.
+let testIpSequence = 0;
+export const randomIp = (): string => {
+  if (testIpSequence >= 65_534) throw new Error('test IP pool exhausted');
+  const n = ++testIpSequence;
+  return `198.18.${Math.floor(n / 256)}.${n % 256}`;
+};
