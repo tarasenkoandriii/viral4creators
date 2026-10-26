@@ -762,6 +762,23 @@ async function main() {
     h.vc.speak('waiting');
     assert.equal(h.ui.playing, null);
   }
+  {
+    const h = harness();
+    const vc = new VoiceController(h.host, async () => {
+      throw new Error('chunk unavailable');
+    });
+    vc.configure(cfg);
+    await tick();
+    vc.answerReady('unloaded', true, vc.beginAnswer());
+    await tick();
+    await tick();
+    assert.equal(
+      h.ui.loading,
+      null,
+      'failed audio module must not leave autoplay stuck loading'
+    );
+    assert.equal(h.notices.length, 1);
+  }
   // Fresh answers prepare exactly one phrase; voice answers start without Play.
   for (const byVoice of [false, true]) {
     const h = harness();

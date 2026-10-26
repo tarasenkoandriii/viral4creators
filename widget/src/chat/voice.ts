@@ -526,8 +526,13 @@ export class VoiceController {
     this.prepared = prepared;
     if (byVoice) this.host.setUi({ loading: messageId, playing: null });
     void this.ensure().then((engine) => {
-      if (!engine || this.prepared !== prepared || epoch !== this.playbackEpoch)
+      if (this.prepared !== prepared || epoch !== this.playbackEpoch) return;
+      if (!engine) {
+        this.prepared = null;
+        this.host.setUi({ loading: null, playing: null });
+        if (prepared.wanted) this.host.notify(this.host.t().voiceRetry);
         return;
+      }
       void this.fetchAudio(engine, messageId, epoch, prepared);
     });
   }
