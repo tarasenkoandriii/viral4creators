@@ -587,7 +587,7 @@ export class VoiceController {
             if (this.audioRequest === request) this.audioRequest = null;
             return;
           }
-          this.host.setUi({ loading: messageId });
+          this.host.setUi({ loading: messageId, playing: null });
           void next.then((result) => {
             if (!active()) return;
             if ('error' in result) return fail(result.error);

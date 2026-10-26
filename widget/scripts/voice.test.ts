@@ -832,6 +832,36 @@ async function main() {
     }
     g.fetch = original;
   }
+  // During a provider gap there is no playing audio (VAD must not apply echo suppression).
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const original = g.fetch;
+    const pending: Array<(r: Response) => void> = [];
+    g.fetch = () => new Promise<Response>((resolve) => pending.push(resolve));
+    h.vc.speak('gap');
+    pending[0](
+      new Response(new Uint8Array([1]), {
+        headers: { 'X-Assist-Tts-Parts': '2', 'X-Assist-Tts-Part': '0' },
+      })
+    );
+    await tick();
+    await tick();
+    h.engine.playEnd?.();
+    assert.equal(h.ui.playing, null);
+    assert.equal(h.ui.loading, 'gap');
+    h.vc.cancel();
+    pending[1](
+      new Response(new Uint8Array([2]), {
+        headers: { 'X-Assist-Tts-Parts': '2', 'X-Assist-Tts-Part': '1' },
+      })
+    );
+    await tick();
+    await tick();
+    assert.equal(h.engine.played.length, 1);
+    g.fetch = original;
+  }
   // A failed look-ahead ends the queue after the current phrase, without retries.
   {
     const h = harness();
