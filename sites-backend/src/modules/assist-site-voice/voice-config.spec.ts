@@ -10,6 +10,18 @@ import {
 import { voiceUpgradeUnits } from './public/voice-dialog';
 
 describe('настройка голоса (Э5)', () => {
+  it('preserves the admin auto-speech switch; absent means default on', () => {
+    expect(
+      voiceConfigOf({ input: true, output: true, autoSpeak: false }).autoSpeak,
+    ).toBe(false);
+    expect(
+      voiceConfigOf({ input: true, output: true }).autoSpeak,
+    ).toBeUndefined();
+    expect(
+      parseVoiceConfig({ input: true, output: true, autoSpeak: 'false' }).ok,
+    ).toBe(false);
+  });
+
   it('по умолчанию голос выключен (§4.10)', () => {
     expect(defaultVoiceConfig()).toEqual({
       schema: 1,

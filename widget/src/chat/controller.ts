@@ -1018,6 +1018,7 @@ export class ChatController {
   }
 
   private async send(p: Pending, resend: boolean) {
+    const audioEpoch = this.voice.beginAnswer();
     this.set({ busy: true });
     let mid = 'p-' + p.crid;
     this.upsert(mid, {}, true);
@@ -1167,7 +1168,10 @@ export class ChatController {
       // Обрыв соединения после meta — ответ дописывается на сервере: дочитаем.
       if (!(e instanceof ApiError) && mid.indexOf('p-') !== 0) {
         this.set({ busy: false });
-        void this.follow(mid);
+        void this.follow(
+          mid,
+          !resend ? { epoch: audioEpoch, byVoice: !!p.vt } : undefined
+        );
         return;
       }
       this.set({
@@ -1188,7 +1192,10 @@ export class ChatController {
       return;
     }
     if (!gotDone && mid.indexOf('p-') !== 0) {
-      void this.follow(mid);
+      void this.follow(
+        mid,
+        !resend ? { epoch: audioEpoch, byVoice: !!p.vt } : undefined
+      );
       return;
     }
     this.ss('pending', null);
@@ -1207,6 +1214,9 @@ export class ChatController {
       return;
     }
     this.following.delete(mid);
+    const answer = this.state.messages.find((m) => m.id === mid);
+    if (!resend && answer?.streamState === 'complete' && answer.text.trim())
+      this.voice.answerReady(mid, !!p.vt, audioEpoch);
     this.signal('message:' + mid);
     // Сверка с базой (склейка стрима, решение 23): дописанное ПОТОКОМ могло
     // быть маскировано на стыке сброса — правда в state (JSON-путь уже из базы).
@@ -1250,7 +1260,7 @@ export class ChatController {
   }
 
   /** Продолжение стрима после перезагрузки/обрыва (§4-бис.4): опрос/длинный опрос БД. */
-  async follow(mid: string) {
+  async follow(mid: string, audio?: { epoch: number; byVoice: boolean }) {
     if (this.loops.has(mid)) return;
     this.loops.add(mid);
     this.following.add(mid);
@@ -1283,6 +1293,9 @@ export class ChatController {
     }
     this.following.delete(mid);
     this.loops.delete(mid);
+    const answer = this.state.messages.find((m) => m.id === mid);
+    if (audio && answer?.streamState === 'complete' && answer.text.trim())
+      this.voice.answerReady(mid, audio.byVoice, audio.epoch);
     const p = this.pending();
     if (p && p.mid === mid) this.ss('pending', null);
     this.signal('message:' + mid);

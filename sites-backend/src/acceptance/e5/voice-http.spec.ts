@@ -76,7 +76,7 @@ describeDb('Э5: голос виджета по HTTP', () => {
   beforeEach(() => fake.reset());
 
   async function voiceFixture(
-    opts: { voice?: boolean } = {},
+    opts: { voice?: boolean; autoSpeak?: boolean } = {},
   ): Promise<WidgetFixture> {
     const f = await widgetFixture(stack, [{ host: domain('e5') }]);
     await setPlan(stack.prisma, f.accountId, 'business');
@@ -84,7 +84,15 @@ describeDb('Э5: голос виджета по HTTP', () => {
       await stack.prisma.assistSite.update({
         where: { siteId: f.siteId },
         data: {
-          voiceConfig: { schema: 1, input: true, output: true, voiceId: null },
+          voiceConfig: {
+            schema: 1,
+            input: true,
+            output: true,
+            voiceId: null,
+            ...(opts.autoSpeak === undefined
+              ? {}
+              : { autoSpeak: opts.autoSpeak }),
+          },
         },
       });
     }
@@ -373,11 +381,21 @@ describeDb('Э5: голос виджета по HTTP', () => {
       .get(`/widget/v1/config?pk=${on.pk}`)
       .expect(200);
     expect(r1.body.data.voice).toEqual({
+      autoSpeak: true,
       input: true,
       output: true,
       maxRecordMs: 30_000,
       minSpeechMs: 400,
       endSilenceMs: 1_000,
+    });
+    const manual = await voiceFixture({ autoSpeak: false });
+    const rManual = await request(srv())
+      .get(`/widget/v1/config?pk=${manual.pk}`)
+      .expect(200);
+    expect(rManual.body.data.voice).toMatchObject({
+      input: true,
+      output: true,
+      autoSpeak: false,
     });
     const off = await voiceFixture({ voice: false });
     const r2 = await request(srv())

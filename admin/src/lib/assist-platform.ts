@@ -70,6 +70,7 @@ export interface AssistAccountDetail {
     blocked: boolean;
     dailyCapUsd: number | null;
     voiceDailyCapUsd: number | null;
+    voiceAutoSpeak: boolean;
     widgetVersion: number;
     hosts: Array<{ host: string; status: string; expiresAt: string | null }>;
   }>;
@@ -134,7 +135,7 @@ export const assistApi = {
     apiPost<AssistAccountDetail>(`/admin/assist/accounts/${encodeURIComponent(id)}/extend`, { days }),
   message: (id: string, text: string) =>
     apiPost<{ sent: number }>(`/admin/assist/accounts/${encodeURIComponent(id)}/message`, { text }),
-  setSite: (siteId: string, body: { blocked?: boolean; dailyCapUsd?: number | null; voiceDailyCapUsd?: number | null }) =>
+  setSite: (siteId: string, body: { blocked?: boolean; dailyCapUsd?: number | null; voiceDailyCapUsd?: number | null; voiceAutoSpeak?: boolean }) =>
     apiPatch<AssistAccountDetail>(`/admin/assist/sites/${encodeURIComponent(siteId)}`, body),
   review: (days: number) => apiGet<AssistReviewRow[]>('/admin/assist/review', { days, limit: 100 }),
   addToEval: (messageId: string) =>

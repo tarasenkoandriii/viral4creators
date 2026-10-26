@@ -173,6 +173,7 @@ test('push-to-talk: согласие называет слушателя; инд
     'голосом'
   );
   await waitAnswer(page);
+  await expect.poll(async () => (await ttsOf(pk)).length).toBe(1);
   const calls = (await log()).modelCalls;
   expect(calls.at(-1)).toMatchObject({
     question: 'Скільки коштує доставка?',
@@ -444,8 +445,6 @@ test('slow audio preparation stays visible and does not require repeated play ta
 }) => {
   const pk = await voiceSite({ voice: { ...VOICE, input: false } });
   await open(page, pk);
-  await ask(page, 'Скільки коштує доставка?');
-  await waitAnswer(page);
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -456,6 +455,8 @@ test('slow audio preparation stays visible and does not require repeated play ta
     await held;
     await route.continue();
   });
+  await ask(page, 'Скільки коштує доставка?');
+  await waitAnswer(page);
   await chat(page)
     .getByRole('button', { name: 'Озвучити відповідь', exact: true })
     .click();
@@ -479,8 +480,6 @@ test('phrase audio starts before the held next phrase and completes in one playb
 }) => {
   const pk = await voiceSite({ voice: { ...VOICE, input: false } });
   await open(page, pk);
-  await ask(page, 'Скільки коштує доставка?');
-  await waitAnswer(page);
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -502,6 +501,8 @@ test('phrase audio starts before the held next phrase and completes in one playb
       },
     });
   });
+  await ask(page, 'Скільки коштує доставка?');
+  await waitAnswer(page);
   await chat(page)
     .getByRole('button', { name: 'Озвучити відповідь', exact: true })
     .click();
@@ -514,4 +515,32 @@ test('phrase audio starts before the held next phrase and completes in one playb
     timeout: 10000,
   });
   await expect(playback).toHaveAttribute('aria-label', 'Озвучити відповідь');
+});
+
+test('admin auto-speech off: no eager synthesis; manual speaker still works', async ({
+  page,
+}) => {
+  const pk = await voiceSite({ voice: { ...VOICE, autoSpeak: false } });
+  await open(page, pk);
+  await ask(page, 'Доставка?');
+  await waitAnswer(page);
+  await page.waitForTimeout(300);
+  expect(await ttsOf(pk)).toHaveLength(0);
+  await chat(page).locator('.msg.bot .spk').last().click();
+  await expect.poll(async () => (await ttsOf(pk)).length).toBe(1);
+});
+
+test('default eager first phrase is silent until manual Play and is reused', async ({
+  page,
+}) => {
+  const pk = await voiceSite();
+  await open(page, pk);
+  await ask(page, 'Доставка?');
+  await waitAnswer(page);
+  await expect.poll(async () => (await ttsOf(pk)).length).toBe(1);
+  const spk = chat(page).locator('.msg.bot .spk').last();
+  await expect(spk).toHaveAttribute('aria-pressed', 'false');
+  await spk.click();
+  await expect(spk).toHaveAttribute('aria-pressed', 'true');
+  expect(await ttsOf(pk)).toHaveLength(1);
 });

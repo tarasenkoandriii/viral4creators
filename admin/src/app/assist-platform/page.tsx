@@ -252,20 +252,23 @@ function AccountsTab() {
 function SiteBudgetControls({ site, busy, save }: {
   site: AssistAccountDetail['sites'][number];
   busy: boolean;
-  save: (caps: { dailyCapUsd: number | null; voiceDailyCapUsd: number | null }) => void;
+  save: (caps: { dailyCapUsd: number | null; voiceDailyCapUsd: number | null; voiceAutoSpeak: boolean }) => void;
 }) {
   const [chat, setChat] = useState(site.dailyCapUsd === null ? '' : String(site.dailyCapUsd));
   const [voice, setVoice] = useState(site.voiceDailyCapUsd == null ? '' : String(site.voiceDailyCapUsd));
+  const [autoSpeak, setAutoSpeak] = useState(site.voiceAutoSpeak !== false);
   const a = parseCapUsd(chat), b = parseCapUsd(voice);
   const valid = a.ok && b.ok && (a.value === null || a.value <= 1000) && (b.value === null || b.value <= 1000);
   return <form onSubmit={(event) => {
     event.preventDefault();
-    if (valid && a.ok && b.ok) save({ dailyCapUsd: a.value, voiceDailyCapUsd: b.value });
+    if (valid && a.ok && b.ok) save({ dailyCapUsd: a.value, voiceDailyCapUsd: b.value, voiceAutoSpeak: autoSpeak });
   }}>
     <label>Чат · $/сутки · {site.name}<input aria-label={`Чат · $/сутки · ${site.name}`} inputMode="decimal" value={chat} onChange={(e) => setChat(e.target.value)} /></label>
     <label>Голос · $/сутки · {site.name}<input aria-label={`Голос · $/сутки · ${site.name}`} inputMode="decimal" value={voice} onChange={(e) => setVoice(e.target.value)} /></label>
+    <label><input type="checkbox" checked={autoSpeak} disabled={busy} onChange={(e) => setAutoSpeak(e.target.checked)} /> Автоозвучка голосовых ответов · {site.name}</label>
+    <p className="muted">Готовить первую фразу нового ответа; после вопроса микрофоном — сразу воспроизводить. Расходует квоту голоса. Выключено — только ручная кнопка динамика.</p>
     <p className="muted">Пусто — по тарифу; 0 — запрет. Сброс каждый день UTC, не разовый бюджет.</p>
-    <button type="submit" disabled={busy || !valid}>Сохранить лимиты {site.name}</button>
+    <button type="submit" disabled={busy || !valid}>Сохранить лимиты и озвучку {site.name}</button>
   </form>;
 }
 
@@ -357,7 +360,7 @@ function AccountPanel({ id }: { id: string }) {
                     <td>потолок/сутки: {s.dailyCapUsd === null ? 'по тарифу' : fmtUsd(s.dailyCapUsd)}</td>
                     <td>
                       <SiteBudgetControls
-                        key={`${s.siteId}:${s.dailyCapUsd}:${s.voiceDailyCapUsd}`}
+                        key={`${s.siteId}:${s.dailyCapUsd}:${s.voiceDailyCapUsd}:${s.voiceAutoSpeak}`}
                         site={s}
                         busy={busy}
                         save={(caps) => act(

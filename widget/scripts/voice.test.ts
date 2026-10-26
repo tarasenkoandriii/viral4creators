@@ -762,6 +762,102 @@ async function main() {
     h.vc.speak('waiting');
     assert.equal(h.ui.playing, null);
   }
+  {
+    const h = harness();
+    const vc = new VoiceController(h.host, async () => {
+      throw new Error('chunk unavailable');
+    });
+    vc.configure(cfg);
+    await tick();
+    vc.answerReady('unloaded', true, vc.beginAnswer());
+    await tick();
+    await tick();
+    assert.equal(
+      h.ui.loading,
+      null,
+      'failed audio module must not leave autoplay stuck loading'
+    );
+    assert.equal(h.notices.length, 1);
+  }
+  // Fresh answers prepare exactly one phrase; voice answers start without Play.
+  for (const byVoice of [false, true]) {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const pending: Array<{
+      signal: AbortSignal;
+      resolve: (r: Response) => void;
+    }> = [];
+    g.fetch = (_path: string, init: { signal: AbortSignal }) =>
+      new Promise<Response>((resolve) =>
+        pending.push({ signal: init.signal, resolve })
+      );
+    const epoch = h.vc.beginAnswer();
+    h.vc.answerReady('fresh', byVoice, epoch);
+    h.vc.answerReady('fresh', byVoice, epoch);
+    await tick();
+    assert.equal(pending.length, 1, 'deduplicated first phrase preparation');
+    pending[0].resolve(
+      new Response(new Uint8Array([1]), {
+        headers: {
+          'X-Assist-Tts-Parts': '2',
+          'X-Assist-Tts-Part': '0',
+        },
+      })
+    );
+    await tick();
+    await tick();
+    assert.equal(h.engine.played.length, byVoice ? 1 : 0);
+    if (!byVoice) {
+      assert.equal(
+        pending.length,
+        1,
+        'silent preparation must not synthesize remaining phrases'
+      );
+      h.vc.speak('fresh');
+      assert.equal(
+        h.engine.played.length,
+        1,
+        'manual play reuses prepared bytes'
+      );
+    }
+    assert.equal(pending.length, 2, 'one look-ahead after playback starts');
+    h.vc.answerReady('fresh', byVoice, epoch);
+    await tick();
+    assert.equal(
+      pending.length,
+      2,
+      'late duplicate completion cannot restart playback'
+    );
+    h.vc.cancel();
+    assert.equal(pending[1].signal.aborted, true);
+  }
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    let requests = 0;
+    g.fetch = async () => {
+      requests++;
+      return new Response(new Uint8Array([1]));
+    };
+    const epoch = h.vc.beginAnswer();
+    h.vc.cancel();
+    h.vc.answerReady('late', true, epoch);
+    await tick();
+    assert.equal(requests, 0, 'close/Stop before answer prevents synthesis');
+    h.vc.configure({ ...cfg, autoSpeak: false });
+    h.vc.answerReady('off', true, h.vc.beginAnswer());
+    await tick();
+    assert.equal(requests, 0, 'unchecked means no automatic paid request');
+    h.vc.configure({ ...cfg, autoSpeak: false });
+    assert.equal(h.ui.autoSpeak, false, 'site setting remains authoritative');
+    h.vc.speak('off');
+    await tick();
+    await tick();
+    assert.equal(requests, 1, 'manual play remains available');
+    h.vc.cancel();
+  }
   // Phrase protocol: play the first bytes before later audio is ready, one look-ahead.
   for (const cancel of [false, true]) {
     const h = harness();

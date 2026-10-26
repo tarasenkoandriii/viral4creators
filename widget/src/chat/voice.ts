@@ -55,6 +55,7 @@ export interface VoiceUi {
   handsFree: boolean;
   /** Кнопка «озвучить ответ». */
   speak: boolean;
+  autoSpeak: boolean;
   phase: 'idle' | 'paused' | 'consent' | 'recording' | 'sending';
   /** Уровень 0…1 для индикатора записи. */
   level: number;
@@ -70,6 +71,7 @@ export function voiceOff(): VoiceUi {
     mic: false,
     handsFree: false,
     speak: false,
+    autoSpeak: true,
     phase: 'idle',
     level: 0,
     since: 0,
@@ -104,6 +106,7 @@ export interface VoiceHost {
 export interface VoiceCfg extends RecordLimits {
   input: boolean;
   output: boolean;
+  autoSpeak?: boolean;
   streaming?: boolean;
 }
 
@@ -126,9 +129,16 @@ export class VoiceController {
   private planMode = false;
   private recordingEpoch = 0;
   private playbackEpoch = 0;
+  private automaticMessage: string | null = null;
   private stream: VoiceStream | null = null;
   private sttRequest: AbortController | null = null;
   private audioRequest: AbortController | null = null;
+  private prepared: {
+    id: string;
+    epoch: number;
+    wanted: boolean;
+    start?: () => void;
+  } | null = null;
   private listenTimer: ReturnType<typeof setTimeout> | null = null;
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
   private handsFreeUntil = 0;
@@ -153,7 +163,7 @@ export class VoiceController {
       return this.host.setUi(voiceOff());
     }
     if (!cfg.input) this.stopRecording();
-    if (!cfg.output) this.stopSpeaking();
+    if (!cfg.output || cfg.autoSpeak === false) this.stopSpeaking();
     const md =
       typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
     const canMic =
@@ -165,6 +175,7 @@ export class VoiceController {
     this.host.setUi({
       mic: canMic,
       speak: cfg.output,
+      autoSpeak: cfg.autoSpeak !== false,
       phase: canMic && armed ? 'paused' : 'idle',
     });
     if (canMic || cfg.output) void this.ensure();
@@ -393,6 +404,7 @@ export class VoiceController {
 
   private stopSpeaking() {
     this.playbackEpoch++;
+    this.prepared = null;
     this.audioRequest?.abort();
     this.audioRequest = null;
     this.engine?.stopPlayback();
@@ -498,10 +510,47 @@ export class VoiceController {
 
   // ── озвучка ─────────────────────────────────────────────────────────────
 
+  beginAnswer() {
+    this.stopSpeaking();
+    this.automaticMessage = null;
+    return this.playbackEpoch;
+  }
+
+  /** Only a fresh completed answer may prepare audio; never replay history. */
+  answerReady(messageId: string, byVoice: boolean, epoch: number) {
+    const ui = this.host.ui();
+    if (epoch !== this.playbackEpoch || !ui.speak || !ui.autoSpeak) return;
+    if (this.automaticMessage === messageId) return;
+    this.automaticMessage = messageId;
+    const prepared = { id: messageId, epoch, wanted: byVoice };
+    this.prepared = prepared;
+    if (byVoice) this.host.setUi({ loading: messageId, playing: null });
+    void this.ensure().then((engine) => {
+      if (this.prepared !== prepared || epoch !== this.playbackEpoch) return;
+      if (!engine) {
+        this.prepared = null;
+        this.host.setUi({ loading: null, playing: null });
+        if (prepared.wanted) this.host.notify(this.host.t().voiceRetry);
+        return;
+      }
+      void this.fetchAudio(engine, messageId, epoch, prepared);
+    });
+  }
+
   /** «Озвучить ответ» (жест): повторное нажатие на звучащем — стоп. */
   speak(messageId: string) {
     const ui = this.host.ui();
     if (!ui.speak) return;
+    const prepared = this.prepared;
+    if (prepared?.id === messageId && prepared.epoch === this.playbackEpoch) {
+      this.engine?.unlock();
+      prepared.wanted = true;
+      this.host.setUi({ loading: messageId, playing: null });
+      const start = prepared.start;
+      prepared.start = undefined;
+      start?.();
+      return;
+    }
     const engine = this.engine;
     // Repeated play taps while preparing must not cancel or bill another request.
     if (ui.loading === messageId) return;
@@ -521,7 +570,8 @@ export class VoiceController {
   private async fetchAudio(
     engine: VoiceEngine,
     messageId: string,
-    epoch: number
+    epoch: number,
+    prepared?: NonNullable<VoiceController['prepared']>
   ) {
     const request = new AbortController();
     this.audioRequest = request;
@@ -533,7 +583,8 @@ export class VoiceController {
       if (this.audioRequest === request) this.audioRequest = null;
       engine.stopPlayback();
       this.host.setUi({ loading: null, playing: null });
-      this.failed(error);
+      if (this.prepared === prepared) this.prepared = null;
+      if (!prepared || prepared.wanted) this.failed(error);
     };
     const read = async (index: number, expectedCount?: number) => {
       const r = await this.post(
@@ -600,7 +651,13 @@ export class VoiceController {
     };
     try {
       const first = await read(0);
-      play(first.bytes, 0, first.count);
+      if (!active()) return;
+      const start = () => {
+        if (this.prepared === prepared) this.prepared = null;
+        play(first.bytes, 0, first.count);
+      };
+      if (prepared && !prepared.wanted) prepared.start = start;
+      else start();
     } catch (error) {
       fail(error);
     }
