@@ -1,4 +1,4 @@
-import { speakableText } from './tts-text';
+import { speakableText, speechPhrases } from './tts-text';
 
 describe('текст для озвучки (Э5)', () => {
   it('без меток источников, markdown и адресов; ссылки — подписью', () => {
@@ -20,5 +20,29 @@ describe('текст для озвучки (Э5)', () => {
     expect(
       speakableText('без крапок '.repeat(40), 50).length,
     ).toBeLessThanOrEqual(50);
+  });
+});
+
+describe('phrase playback', () => {
+  it('separates the first sentence and preserves decimals, order and all words', () => {
+    const text =
+      'Raffle uses TON Testnet. The fee is 10.5 percent. Test coins only.';
+    const parts = speechPhrases(text);
+    expect(parts[0]).toBe('Raffle uses TON Testnet.');
+    expect(parts.join(' ')).toBe(text);
+    expect(parts[1]).toContain('10.5');
+  });
+  it('bounds a long first sentence without losing content or creating excessive calls', () => {
+    const text = 'Довга фраза без крапки '
+      .repeat(70)
+      .trim()
+      .slice(0, 1200)
+      .trim();
+    const parts = speechPhrases(text);
+    expect(parts[0].length).toBeLessThanOrEqual(180);
+    expect(parts.every((p) => p.length <= 240)).toBe(true);
+    expect(parts.length).toBeLessThanOrEqual(16);
+    expect(parts.join(' ')).toBe(text);
+    expect(speechPhrases('')).toEqual([]);
   });
 });

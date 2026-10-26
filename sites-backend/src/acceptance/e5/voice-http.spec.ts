@@ -321,6 +321,35 @@ describeDb('Э5: голос виджета по HTTP', () => {
     expect(r.headers['cache-control']).toBe('private, no-store');
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     expect((r.body as Buffer).equals(fake.ttsAudio)).toBe(true);
+    const phrase = await request(srv())
+      .post('/widget/v1/tts?segment=0')
+      .set('Origin', W_ORIGIN)
+      .set(WIDGET_VISITOR_TOKEN_HEADER, token)
+      .send({ messageId: mid })
+      .expect(200);
+    expect(phrase.headers['x-assist-tts-part']).toBe('0');
+    expect(Number(phrase.headers['x-assist-tts-parts'])).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(phrase.headers['cache-control']).toBe('private, no-store');
+    for (const query of ['-1', '16', '0.5', '0&segment=1']) {
+      await request(srv())
+        .post('/widget/v1/tts?segment=' + query)
+        .set('Origin', W_ORIGIN)
+        .set(WIDGET_VISITOR_TOKEN_HEADER, token)
+        .send({ messageId: mid })
+        .expect(400);
+    }
+    await request(srv())
+      .post('/widget/v1/tts?segment=0')
+      .set('Origin', W_ORIGIN)
+      .set(WIDGET_VISITOR_TOKEN_HEADER, token)
+      .send({
+        messageId: mid,
+        text: 'Untrusted client text must never be synthesized',
+      })
+      .expect(400);
+
     const other = await session(f);
     const nf = await request(srv())
       .post('/widget/v1/tts')

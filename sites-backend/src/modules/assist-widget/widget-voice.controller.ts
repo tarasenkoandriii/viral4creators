@@ -247,11 +247,26 @@ export class WidgetVoiceController {
         windowMs: DAY,
       },
     ]);
-    const r = await this.voice.speak(ctx, dto.messageId);
+    // Query opt-in is backwards compatible: older servers ignore it and return full audio.
+    const rawSegment = req.query?.segment;
+    if (
+      rawSegment !== undefined &&
+      (typeof rawSegment !== 'string' || !/^(?:[0-9]|1[0-5])$/.test(rawSegment))
+    )
+      throw widgetError('BAD_REQUEST');
+    const segment = rawSegment === undefined ? undefined : Number(rawSegment);
+    const r =
+      segment === undefined
+        ? await this.voice.speak(ctx, dto.messageId)
+        : await this.voice.speak(ctx, dto.messageId, segment);
     if (!r.ok) throw widgetError(FAILURE_CODE[r.failure]);
     res.status(200);
     res.setHeader('Content-Type', r.mime);
     res.setHeader('Content-Length', String(r.audio.length));
+    if (segment !== undefined && r.segmentCount !== undefined) {
+      res.setHeader('X-Assist-Tts-Parts', String(r.segmentCount));
+      res.setHeader('X-Assist-Tts-Part', String(segment));
+    }
     // Ответ посетителю — личный: ни общий кэш, ни диск браузера.
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');

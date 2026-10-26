@@ -73,7 +73,7 @@ import {
   SONIOX_TTS_TIMEOUT_MS,
 } from './soniox-tts.client';
 import { readTtsCache, ttsCacheKey, writeTtsCache } from './tts-cache';
-import { speakableText } from './tts-text';
+import { speakableText, speechPhrases } from './tts-text';
 import {
   readVoiceSiteRow,
   voiceAccess,
@@ -161,7 +161,13 @@ type SynthOutcome =
   | { ok: false; failure: VoiceFailure };
 
 export type SpeakResult =
-  | { ok: true; audio: Buffer; mime: string; cached: boolean }
+  | {
+      ok: true;
+      audio: Buffer;
+      mime: string;
+      cached: boolean;
+      segmentCount?: number;
+    }
   | { ok: false; failure: VoiceFailure };
 
 @Injectable()
@@ -494,7 +500,11 @@ export class SiteVoiceService {
 
   // ── Озвучка ─────────────────────────────────────────────────────────────
 
-  async speak(ctx: VoiceCtx, messageId: string): Promise<SpeakResult> {
+  async speak(
+    ctx: VoiceCtx,
+    messageId: string,
+    segmentIndex?: number,
+  ): Promise<SpeakResult> {
     const { site } = ctx;
     const now = this.now();
     const state = await readState(this.db, site.accountId, now);
@@ -513,10 +523,21 @@ export class SiteVoiceService {
       select: { conversationId: true, text: true, lang: true },
     });
     if (!msg) return { ok: false, failure: 'not_found' };
-    const text = speakableText(msg.text, VOICE_DEFAULTS.ttsMaxChars);
+    const fullText = speakableText(msg.text, VOICE_DEFAULTS.ttsMaxChars);
+    const parts =
+      segmentIndex === undefined ? [fullText] : speechPhrases(fullText);
+    if (
+      segmentIndex !== undefined &&
+      (!Number.isInteger(segmentIndex) ||
+        segmentIndex < 0 ||
+        segmentIndex >= parts.length ||
+        parts.length > 16)
+    )
+      return { ok: false, failure: 'not_found' };
+    const text = parts[segmentIndex ?? 0];
     if (!text) return { ok: false, failure: 'not_found' };
     const voice = access.voiceId ?? this.tts.defaultVoice();
-    const lang = ttsLanguage(msg.lang, text);
+    const lang = ttsLanguage(msg.lang, fullText);
     const key = ttsCacheKey({ voice, lang, model: this.tts.model(), text });
 
     let out = await readTtsCache(this.db, site.siteId, key, now);
@@ -559,7 +580,13 @@ export class SiteVoiceService {
     this.logger.log(
       `tts site=${site.siteId} chars=${text.length} cached=${cached}`,
     );
-    return { ok: true, audio: out.audio, mime: out.mime, cached };
+    return {
+      ok: true,
+      audio: out.audio,
+      mime: out.mime,
+      cached,
+      ...(segmentIndex === undefined ? {} : { segmentCount: parts.length }),
+    };
   }
 
   /** Резерв денег дня → синтез → учёт → кэш (под заявкой single-flight). */

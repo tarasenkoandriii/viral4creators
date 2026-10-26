@@ -451,7 +451,7 @@ test('slow audio preparation stays visible and does not require repeated play ta
     release = resolve;
   });
   let requests = 0;
-  await page.route('**/widget/v1/tts', async (route) => {
+  await page.route('**/widget/v1/tts*', async (route) => {
     requests++;
     await held;
     await route.continue();
@@ -472,4 +472,46 @@ test('slow audio preparation stays visible and does not require repeated play ta
   release();
   await expect(preparing).toHaveCount(0);
   await expect.poll(async () => (await ttsOf(pk)).length).toBe(1);
+});
+
+test('phrase audio starts before the held next phrase and completes in one playback session', async ({
+  page,
+}) => {
+  const pk = await voiceSite({ voice: { ...VOICE, input: false } });
+  await open(page, pk);
+  await ask(page, 'Скільки коштує доставка?');
+  await waitAnswer(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const requested: number[] = [];
+  await page.route('**/widget/v1/tts*', async (route) => {
+    const index = Number(
+      new URL(route.request().url()).searchParams.get('segment')
+    );
+    requested.push(index);
+    if (index === 1) await held;
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        'X-Assist-Tts-Parts': '3',
+        'X-Assist-Tts-Part': String(index),
+      },
+    });
+  });
+  await chat(page)
+    .getByRole('button', { name: 'Озвучити відповідь', exact: true })
+    .click();
+  const playback = chat(page).locator('.spk[aria-pressed]').last();
+  await expect(playback).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => requested).toEqual([0, 1]);
+  release();
+  await expect.poll(() => requested).toEqual([0, 1, 2]);
+  await expect(playback).toHaveAttribute('aria-pressed', 'false', {
+    timeout: 10000,
+  });
+  await expect(playback).toHaveAttribute('aria-label', 'Озвучити відповідь');
 });

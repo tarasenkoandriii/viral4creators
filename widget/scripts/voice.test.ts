@@ -617,7 +617,7 @@ async function main() {
     assert.equal(h.ui.loading, 'm1');
     await tick();
     await tick();
-    assert.equal(fetches[0].path, '/widget/v1/tts');
+    assert.equal(fetches[0].path, '/widget/v1/tts?segment=0');
     assert.equal(fetches[0].body, JSON.stringify({ messageId: 'm1' }));
     assert.equal(h.ui.playing, 'm1');
     assert.equal(h.engine.played.length, 1);
@@ -761,6 +761,108 @@ async function main() {
     assert.equal(h.ui.playing, 'waiting');
     h.vc.speak('waiting');
     assert.equal(h.ui.playing, null);
+  }
+  // Phrase protocol: play the first bytes before later audio is ready, one look-ahead.
+  for (const cancel of [false, true]) {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const original = g.fetch;
+    const pending: Array<{
+      path: string;
+      signal: AbortSignal;
+      resolve: (r: Response) => void;
+    }> = [];
+    g.fetch = (path: string, init: { signal: AbortSignal }) =>
+      new Promise<Response>((resolve) =>
+        pending.push({ path, signal: init.signal, resolve })
+      );
+    const audio = (index: number) =>
+      new Response(new Uint8Array([index + 1]), {
+        headers: {
+          'X-Assist-Tts-Parts': '3',
+          'X-Assist-Tts-Part': String(index),
+        },
+      });
+    h.vc.speak('phrases');
+    pending[0].resolve(audio(0));
+    await tick();
+    await tick();
+    assert.equal(
+      h.engine.played.length,
+      1,
+      'first phrase plays without waiting for the rest'
+    );
+    assert.equal(pending.length, 2, 'only one future phrase is requested');
+    assert.equal(pending[1].path, '/widget/v1/tts?segment=1');
+    if (cancel) {
+      h.vc.cancel();
+      assert.equal(pending[1].signal.aborted, true);
+      pending[1].resolve(audio(1));
+      h.engine.playEnd?.();
+      await tick();
+      await tick();
+      assert.equal(h.engine.played.length, 1);
+      assert.equal(pending.length, 2);
+    } else {
+      pending[1].resolve(audio(1));
+      await tick();
+      assert.equal(
+        h.engine.played.length,
+        1,
+        'prefetched audio cannot overlap'
+      );
+      h.engine.playEnd?.();
+      await tick();
+      await tick();
+      assert.equal(h.engine.played.length, 2);
+      assert.equal(pending.length, 3);
+      pending[2].resolve(audio(2));
+      await tick();
+      h.engine.playEnd?.();
+      await tick();
+      await tick();
+      assert.equal(h.engine.played.length, 3);
+      assert.deepEqual(
+        h.engine.played.map((b) => new Uint8Array(b)[0]),
+        [1, 2, 3]
+      );
+      h.engine.playEnd?.();
+      assert.equal(h.ui.playing, null);
+    }
+    g.fetch = original;
+  }
+  // A failed look-ahead ends the queue after the current phrase, without retries.
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const original = g.fetch;
+    let calls = 0;
+    g.fetch = async () => {
+      calls++;
+      return calls === 1
+        ? new Response(new Uint8Array([1]), {
+            headers: { 'X-Assist-Tts-Parts': '3', 'X-Assist-Tts-Part': '0' },
+          })
+        : new Response(
+            JSON.stringify({ success: false, error: { code: 'UPSTREAM' } }),
+            { status: 503 }
+          );
+    };
+    h.vc.speak('provider-error');
+    await tick();
+    await tick();
+    assert.equal(h.engine.played.length, 1);
+    h.engine.playEnd?.();
+    await tick();
+    await tick();
+    assert.equal(calls, 2);
+    assert.equal(h.engine.played.length, 1);
+    assert.equal(h.ui.playing, null);
+    assert.equal(h.ui.loading, null);
+    assert.ok(h.notices.length > 0);
+    g.fetch = original;
   }
   // Stop/start of the SAME message: an older response must not play twice (ABA).
   {

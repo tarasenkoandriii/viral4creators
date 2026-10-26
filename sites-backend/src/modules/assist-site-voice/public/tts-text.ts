@@ -36,3 +36,30 @@ export function speakableText(raw: string, maxChars: number): string {
   t = end > maxChars / 2 ? cut.slice(0, end + 1) : cut;
   return t.trim();
 }
+
+/** First sentence starts promptly; later sentences are packed to bound requests.
+ * Input is already normalized and capped by speakableText. Never accepts client text.
+ */
+export function speechPhrases(text: string): string[] {
+  if (!text.trim()) return [];
+  const sentences = text.split(/(?<=[.!?…])\s+/u);
+  const parts: string[] = [];
+  let pending = '';
+  for (const sentence of sentences) {
+    for (const word of sentence.trim().split(/\s+/u)) {
+      const limit = parts.length === 0 ? 180 : 240;
+      if (pending && pending.length + 1 + word.length > limit) {
+        parts.push(pending);
+        pending = '';
+      }
+      pending += (pending ? ' ' : '') + word;
+    }
+    // The first sentence is available independently; pack the rest to save calls.
+    if (parts.length === 0 && pending) {
+      parts.push(pending);
+      pending = '';
+    }
+  }
+  if (pending) parts.push(pending);
+  return parts;
+}
