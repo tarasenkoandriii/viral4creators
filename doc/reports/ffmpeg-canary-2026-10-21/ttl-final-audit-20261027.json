@@ -1,0 +1,13 @@
+{
+  "sample": 23,
+  "jobsRetained": 23,
+  "expiredWithSuccessfulExecution": 23,
+  "purgedRows": 23,
+  "retainedKeys": 23,
+  "tombstones": 23,
+  "remainingArtifactFiles": 0,
+  "remainingWorkspaces": 0,
+  "remainingOutputDirectories": 0,
+  "observerElapsedHours": 25.026,
+  "publicExpiry": "passed"
+}

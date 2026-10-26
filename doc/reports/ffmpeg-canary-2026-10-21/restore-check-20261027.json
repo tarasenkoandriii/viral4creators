@@ -1,0 +1,8 @@
+{
+  "integrity": "ok",
+  "jobs": 176,
+  "idempotencyKeys": 176,
+  "snapshotBytes": 2715648,
+  "secretDecryptionTested": false,
+  "productionDatabaseModified": false
+}

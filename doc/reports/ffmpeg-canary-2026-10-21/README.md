@@ -259,3 +259,31 @@ The owner waived the pre-switch 24-hour waiting period; TTL observation and alwa
 The read-only observer now emits public-expiry `passed/waiting/failed` after a five-minute cleanup grace. It requires retained HTTP 200 history, OUTPUT_EXPIRED, successful execution history, and zero public output links. Missing history, malformed expiry, retained links, and empty samples cannot produce a pass. Physical deletion and idempotency tombstones remain explicitly unverified by this public-API observation.
 
 13 Python ops tests passed (5 observer + 8 backup tests). Updated script installed in place without restarting API/executor or changing the observation deadline. Live result: health 200, ready/active, 23 waiting, 0 failed; no paid calls or new renders. Existing backup restored into an isolated local SQLite database with integrity OK, 30 jobs and 30 idempotency records; production database untouched.
+
+### Итог TTL и сверка резервной копии — 27.10.2026
+
+Сохранённый `observation-finished.json` на VPS подтверждает завершение
+окна через 25.026 ч: publicExpiry=passed, 23 passed, 0 waiting, 0 failed.
+Read-only запрос SQLite и проверка файловой системы 27.10 дополнили
+наблюдатель: у всех 23 задач сохранено успешное execution history,
+выставлены OUTPUT_EXPIRED/purged_at и tombstone ключа идемпотентности.
+Все 23 ключа и записи задач существуют; файлов результатов, каталогов
+outputs и рабочих каталогов этих задач нет. Новые рендеры не создавались,
+API/executor/relay не перезапускались.
+
+Квитанция без ключей, URL и содержимого задач:
+[ttl-final-audit-20261027.json](ttl-final-audit-20261027.json).
+Она закрывает прежнее ограничение public-only наблюдателя и старую
+отметку waiting выше; проверка 90-дневного истечения истории не выполнялась.
+
+LaunchAgent на Mac зарегистрирован, LastExitStatus=0. Свежая off-host
+копия проверена отдельным восстановлением во временный каталог:
+integrity=ok, 176 jobs, 176 idempotency keys, 2715648 байт.
+[Квитанция](restore-check-20261027.json). Временная восстановленная БД
+удалена, production БД не изменялась; секреты не копировались и
+расшифровка payload в этой проверке не выполнялась.
+
+Этап C целиком остаётся открытым: Mac не является always-on приёмником.
+Нужны согласованный постоянно доступный off-host storage/host и отдельная
+проверка восстановления секретов. Само наличие SQLite-копии эти задачи
+не закрывает. Nova и принятые ролики не менялись, платных вызовов нет.
