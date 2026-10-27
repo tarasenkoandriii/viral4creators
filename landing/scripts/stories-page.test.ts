@@ -143,7 +143,7 @@ async function main() {
     }
     const prepHtml = html.replace(concept, '');
     // ── §5.1: no unapproved product media outside that concept ──
-    for (const re of [/<video\b/, /<audio\b/, /<button\b/, /<form\b/, /<input\b/, /<textarea\b/, /<select\b/, /<iframe\b/, /<script\b/, /<img\b/]) {
+    for (const re of [/<video\b/, /<audio\b/, /<button\b/, /<form\b/, /<input\b/, /<textarea\b/, /<iframe\b/, /<script\b/, /<img\b/]) {
       assert.doesNotMatch(prepHtml, re, `${locale}: ${re} в режиме prep`);
     }
     assert.doesNotMatch(prepHtml, /class="[^"]*\bplay/i, `${locale}: элемент Play`);
@@ -257,12 +257,13 @@ async function main() {
     assert.match(html, /role="img" aria-label="[^"]+"/, `${locale}: у иллюстрации нет описания`);
 
     // ── FAQ и язык ──
-    assert.equal(count(html, /<details\b/g), 11, `${locale}: 10 вопросов + меню языка`);
+    assert.equal(count(html, /<details\b/g), 10, `${locale}: 10 вопросов`);
     for (const item of t.faq.items) assert.ok(html.includes(decode(item.question)) || decode(html).includes(item.question), `${locale}: вопрос «${item.question}»`);
     for (const l of locales) {
       assert.match(html, new RegExp(`href="/${l}" hrefLang="${l}" lang="${l}"`), `${locale}: нет ссылки на ${l}`);
     }
-    assert.match(html, new RegExp(`href="/${locale}" hrefLang="${locale}" lang="${locale}" aria-current="true"`), `${locale}: текущий язык не отмечен`);
+    assert.match(html, /<select[^>]+aria-label=/, `${locale}: нет выпадающего списка языков`);
+    assert.match(html, new RegExp(`<option value="${locale}"[^>]*selected=""`), `${locale}: текущий язык не выбран`);
 
 
     // ── подвал ──

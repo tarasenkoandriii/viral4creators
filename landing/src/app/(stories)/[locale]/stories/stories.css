@@ -254,45 +254,8 @@ html:has(.st-root) body {
   }
 }
 
-/* ── Выбор языка: <details> со ссылками, работает и без JS ── */
-
-.st-lang {
-  position: relative;
-}
-
-.st-lang summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--st-muted);
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--st-ink);
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-
-.st-lang summary::-webkit-details-marker {
-  display: none;
-}
-
-.st-lang summary::after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: translateY(-2px) rotate(45deg);
-}
-
-.st-lang[open] summary::after {
-  transform: translateY(2px) rotate(-135deg);
-}
+/* Нативный список языков; ссылки ниже доступны без JavaScript. */
+.st-lang { position:relative; }
 
 .st-lang ul {
   position: absolute;
@@ -909,3 +872,5 @@ html:has(.st-root) body {
 .st-hero { background:radial-gradient(ellipse at 85% 15%,rgba(217,135,77,.22),transparent 65%),radial-gradient(ellipse at 5% 85%,rgba(130,110,200,.12),transparent 55%); }
 
 .st-root { --media-surface: var(--st-card); --media-focus: var(--st-accent); }
+
+.st-lang select { max-width:150px; min-height:44px; padding:6px 8px; font:inherit; color:inherit; background:var(--st-card); border:1px solid currentColor; border-radius:8px; }

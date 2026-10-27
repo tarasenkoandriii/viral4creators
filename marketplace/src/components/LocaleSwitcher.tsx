@@ -19,7 +19,7 @@ export function LocaleSwitcher() {
     if (next === current) return;
     document.cookie = `${LOCALE_COOKIE}=${next}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
     const rest = pathname?.replace(new RegExp(`^/${current}(?=/|$)`), '') ?? '';
-    router.push(`/${next}${rest}`);
+    router.push(`/${next}${rest}${window.location.search}${window.location.hash}`);
   }
 
   return (

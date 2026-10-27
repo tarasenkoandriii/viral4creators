@@ -82,6 +82,7 @@ export async function generateMetadata({
   return {
     title: t.meta.title,
     description: t.meta.description,
+    keywords: [],
     // Canonical — адрес на ПОДДОМЕНЕ, а не путь, по которому этот файл
     // лежит в приложении: `/<locale>/site-tutorial` на обоих хостах
     // отвечает редиректом и самостоятельным адресом не является.

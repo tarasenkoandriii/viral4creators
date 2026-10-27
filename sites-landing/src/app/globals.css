@@ -187,37 +187,10 @@ p {
   flex: none;
 }
 
-.locale-switcher ul,
-.main-nav ul,
-.footer-links {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.locale-switcher ul {
-  display: flex;
-  gap: 2px;
-}
-
-.locale-switcher a,
-.locale-switcher span[aria-current] {
-  display: inline-block;
-  min-width: 36px;
-  min-height: 32px;
-  padding: 4px 6px;
-  text-align: center;
-  font-size: 0.875rem;
-  font-weight: 600;
-  border-radius: var(--radius-small);
-  text-decoration: none;
-}
-
-.locale-switcher span[aria-current] {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
+.main-nav ul, .footer-links { list-style:none; margin:0; padding:0; }
+.locale-switcher select { max-width:145px; min-height:44px; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius-small); background:var(--bg); color:var(--text); font:inherit; }
+.mobile-nav > summary { cursor:pointer; padding:10px 0; min-height:44px; }
+@media (min-width:960px) { .mobile-nav > summary { display:none; } .mobile-nav > .main-nav { display:block; } .mobile-nav::details-content { content-visibility:visible; display:block; } }
 
 .main-nav {
   padding-bottom: 8px;

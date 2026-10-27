@@ -285,7 +285,7 @@
           "text": "El guion no sale de tu web: los subdominios de la misma dirección sí valen —el acceso suele vivir en uno propio—, pero otro dominio no, aunque una redirección lleve allí."
         }
       ],
-      "warning": "Los valores de los campos normales del formulario se guardan en el guion tal cual, sin cifrar. Las contraseñas reales y los datos de pago van solo en el bloque de acceso, que sí se cifra."
+      "warning": "Utiliza una cuenta de prueba independiente. Los valores normales del formulario se guardan sin cifrar. No introduzcas datos de pago reales. Introduce las credenciales de prueba solo en el bloque de acceso correspondiente."
     },
     "price": {
       "title": "Cuánto cuesta",
@@ -296,7 +296,7 @@
       "items": [
         {
           "question": "¿Es seguro? ¿De verdad entráis en mi web?",
-          "answer": "Sí, de verdad, con un navegador en nuestro servidor. Los datos del usuario de prueba introducidos en el bloque de acceso se cifran y se reproducen cada vez que se vuelve a montar el vídeo; no llegan al guion, ni a los fotogramas, ni al vídeo. Los valores de los demás campos se guardan tal cual, así que las contraseñas reales y los datos de pago van solo en el bloque de acceso."
+          "answer": "Utiliza una cuenta de prueba independiente. Los valores normales del formulario se guardan sin cifrar. No introduzcas datos de pago reales. Introduce las credenciales de prueba solo en el bloque de acceso correspondiente."
         },
         {
           "question": "¿Y si la web tiene captcha o doble factor?",

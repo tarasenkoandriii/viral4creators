@@ -31,7 +31,7 @@ export default async function Contact() {
   return (
     <article className="page contact">
       <h1>{dict.meta.contactTitle}</h1>
-      <p className="lead">{fmt(f.lead, { sla })}</p>
+      {open && <p className="lead">{fmt(f.lead, { sla })}</p>}
       <AltContact value={alt} label={c.altContact} missing={c.altContactMissing} />
       {open ? (
         <>

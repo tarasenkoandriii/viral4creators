@@ -1,22 +1,17 @@
 import type { ReactNode } from 'react';
 import { brandDisplayName } from '../brand';
-import { pathFor } from '../lib/alternates';
 import { fmt } from '../lib/format';
 import { isVisible, claimStatus } from '../lib/claims';
 import { getDictionary } from '../lib/get-dictionary';
-import { LOCALE_LABELS, LOCALE_SHORT, LOCALE_SWITCH_PARAM, locales, type Locale } from '../lib/i18n';
+import { locales, type Locale } from '../lib/i18n';
+import { LocaleSelect } from './LocaleSelect';
 import { href, hrefLang, type PageKey } from '../lib/pages';
 
 /**
  * Одна шапка и один футер на все страницы (уроки Ф-2 и С-3, §0).
  *
- * Всё — серверные компоненты, без клиентского JS:
- *  - переключатель языка — обычные ссылки `/<loc>/путь?hl=<loc>`;
- *    middleware пишет cookie выбора (явное действие человека — §10.1) и
- *    уводит на чистый адрес. Виден на 360 px (Ф-2): три коротких кода,
- *    не выпадающий список;
- *  - навигация переносится строками, а не прячется в «бургер» (бургер —
- *    это клиентский JS и ещё одна вещь, которая пропадает на телефоне).
+ * Выбор языка — нативный select; без JS доступны ссылки в noscript.
+ * На мобильном навигация раскрывается нативным details, без дополнительного JS.
  *
  * Пункты меню — по реестру: «Блог», «Войти», «Подключить» — `hidden`
  * (blog, web-login, tma-connect). «Документація» (Л5) — uk/en: из ru-
@@ -66,34 +61,14 @@ export function SiteChrome({
             <span className="brand-mark" aria-hidden="true" />
             <span className="brand-name">{brandDisplayName(locale)}</span>
           </a>
-          <nav className="locale-switcher" aria-label={dict.common.localeSwitcher.label}>
-            <ul>
-              {available.map((l) => (
-                <li key={l}>
-                  {l === locale ? (
-                    <span aria-current="true" lang={l} title={LOCALE_LABELS[l]}>
-                      {LOCALE_SHORT[l]}
-                    </span>
-                  ) : (
-                    <a
-                      href={`${pathFor(l, path)}?${LOCALE_SWITCH_PARAM}=${l}`}
-                      hrefLang={l}
-                      lang={l}
-                      title={LOCALE_LABELS[l]}
-                    >
-                      {LOCALE_SHORT[l]}
-                      <span className="sr-only"> — {LOCALE_LABELS[l]}</span>
-                    </a>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <LocaleSelect locale={locale} path={path} available={available} label={dict.common.localeSwitcher.label} />
           <a className="button button-small header-cta" href={href(locale, sandbox ? 'try' : 'pilot')} data-cta="header">
             {sandbox ? dict.common.nav.tryShort : dict.common.nav.pilot}
           </a>
         </div>
-        <nav className="wrap main-nav" aria-label={dict.common.nav.label}>
+        <details className="wrap mobile-nav">
+          <summary>{dict.common.nav.label}</summary>
+        <nav className="main-nav" aria-label={dict.common.nav.label}>
           <ul>
             {nav.map((item) => (
               <li key={item.key}>
@@ -104,6 +79,7 @@ export function SiteChrome({
             ))}
           </ul>
         </nav>
+        </details>
       </header>
       <main id="main" className="site-main" tabIndex={-1}>
         {children}

@@ -285,7 +285,7 @@
           "text": "Das Drehbuch verlässt Ihre Website nicht: Subdomains derselben Adresse sind erlaubt — die Anmeldung liegt oft auf einer eigenen —, eine fremde Domain nicht, auch wenn eine Weiterleitung dorthin führt."
         }
       ],
-      "warning": "Werte gewöhnlicher Formularfelder werden unverschlüsselt im Drehbuch gespeichert. Echte Passwörter und Zahlungsdaten gehören ausschließlich in den Anmeldeblock — dort wird verschlüsselt."
+      "warning": "Verwenden Sie ein separates Testkonto. Normale Formularwerte werden unverschlüsselt im Skript gespeichert. Geben Sie keine echten Zahlungsdaten ein. Test-Zugangsdaten gehören ausschließlich in den vorgesehenen Anmeldeblock."
     },
     "price": {
       "title": "Was das kostet",
@@ -296,7 +296,7 @@
       "items": [
         {
           "question": "Ist das sicher — melden Sie sich wirklich auf meiner Website an?",
-          "answer": "Ja, wirklich, mit einem Browser auf unserem Server. Die im Anmeldeblock eingetragenen Daten des Testbenutzers werden verschlüsselt und bei jedem Neuaufbau des Videos erneut abgespielt; in das Drehbuch, in die Einzelbilder und in das Video gelangen sie nicht. Die Werte der übrigen Formularfelder werden unverändert gespeichert — echte Passwörter und Zahlungsdaten gehören deshalb nur in den Anmeldeblock."
+          "answer": "Verwenden Sie ein separates Testkonto. Normale Formularwerte werden unverschlüsselt im Skript gespeichert. Geben Sie keine echten Zahlungsdaten ein. Test-Zugangsdaten gehören ausschließlich in den vorgesehenen Anmeldeblock."
         },
         {
           "question": "Was, wenn die Website ein Captcha oder Zwei-Faktor-Anmeldung hat?",

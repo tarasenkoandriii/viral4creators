@@ -9,7 +9,7 @@ import { useDictionary } from '../lib/dictionary-context';
  * сигнал, который middleware.ts считает явным выбором человека (см.
  * комментарий там) — и переходит на тот же путь под новым префиксом, а
  * не на главную: смена языка не должна сбрасывать, где человек находился
- * на странице (якоря #faq, #plans и т.д. сохраняются автоматически, они
+ * на странице (query и якоря #faq, #plans сохраняются явно, они
  * не часть pathname).
  */
 export function LocaleSwitcher() {
@@ -23,7 +23,7 @@ export function LocaleSwitcher() {
     // выбранных вручную предпочтений (нет смысла спрашивать чаще).
     document.cookie = `${LOCALE_COOKIE}=${next}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
     const rest = pathname?.replace(new RegExp(`^/${current}(?=/|$)`), '') ?? '';
-    router.push(`/${next}${rest}`);
+    router.push(`/${next}${rest}${window.location.search}${window.location.hash}`);
   }
 
   return (

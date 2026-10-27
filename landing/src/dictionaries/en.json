@@ -285,7 +285,7 @@
           "text": "The script never leaves your site: subdomains of the same address are fine — sign-in often lives on its own — but another domain is not, even if a redirect led there."
         }
       ],
-      "warning": "Values of ordinary form fields are stored in the script as they are, unencrypted. Put real passwords and payment details only in the sign-in block, where encryption applies."
+      "warning": "Use a separate test account. Ordinary form values are stored in the script without encryption. Never enter real payment details. Enter test sign-in credentials only in the dedicated sign-in block."
     },
     "price": {
       "title": "What it costs",
@@ -296,7 +296,7 @@
       "items": [
         {
           "question": "Is this safe — do you really sign in to my site?",
-          "answer": "Yes, for real, with a browser on our server. The test user's details entered in the sign-in block are encrypted and replayed each time the video is rebuilt; they never reach the script, the frames or the video. Values of the other form fields are stored as they are — so put real passwords and payment details only in the sign-in block."
+          "answer": "Use a separate test account. Ordinary form values are stored in the script without encryption. Never enter real payment details. Enter test sign-in credentials only in the dedicated sign-in block."
         },
         {
           "question": "What if the site has a captcha or two-factor auth?",
