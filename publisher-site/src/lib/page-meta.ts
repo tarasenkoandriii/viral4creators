@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { PUBLISHER_BRAND } from '@/brand';
 import { getSiteConfig } from './api';
+import { dict } from './dict';
 import { isIndexable, robotsMeta } from './indexing';
 import { publisherEnv } from './server-env';
 import { absoluteUrl } from './site-url';
@@ -18,6 +19,12 @@ export async function pageMetadata(
   const cfg = await getSiteConfig();
   const indexable = isIndexable(cfg, publisherEnv().indexingOn);
   const url = absoluteUrl(path);
+  const image = {
+    url: absoluteUrl('/og/publisher-uk.png'),
+    width: 1200,
+    height: 630,
+    alt: dict.meta.socialImageAlt,
+  };
   const fullTitle = title
     ? `${title} — ${PUBLISHER_BRAND.name}`
     : `${PUBLISHER_BRAND.name} — ${PUBLISHER_BRAND.positioning}`;
@@ -26,7 +33,16 @@ export async function pageMetadata(
     description,
     alternates: { canonical: url },
     robots: robotsMeta(indexable),
-    openGraph: { type: 'website', url, title: fullTitle, description, siteName: PUBLISHER_BRAND.name, locale: 'uk_UA' },
+    openGraph: {
+      type: 'website',
+      url,
+      title: fullTitle,
+      description,
+      siteName: PUBLISHER_BRAND.name,
+      locale: 'uk_UA',
+      images: [image],
+    },
+    twitter: { card: 'summary_large_image', title: fullTitle, description, images: [image] },
     ...extra,
   };
 }

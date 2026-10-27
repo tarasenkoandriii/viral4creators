@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<rect width="1200" height="630" fill="#121416"/>
+<rect x="56" y="56" width="1088" height="518" rx="28" fill="#1e2227"/>
+<rect x="56" y="56" width="9" height="518" rx="4" fill="#a7c6ff"/>
+<text x="105" y="126" font-family="Arial,sans-serif" font-size="30" font-weight="bold" fill="#a7c6ff">AI Publisher</text>
+<text x="105" y="218" font-family="Arial,sans-serif" font-size="49" font-weight="bold" fill="#f5f5f5">Контент під контролем</text>
+<text x="105" y="280" font-family="Arial,sans-serif" font-size="49" font-weight="bold" fill="#f5f5f5">редактора</text>
+<path d="M108 332h970" stroke="#56616e" stroke-width="2"/>
+<text x="105" y="391" font-family="Arial,sans-serif" font-size="28" fill="#d9dfe8">Джерела → чернетка → перевірка → погодження</text>
+<rect x="105" y="438" width="762" height="57" rx="12" fill="#37300e"/>
+<text x="126" y="475" font-family="Arial,sans-serif" font-size="25" fill="#f7e8a1">Пілот · запуск після налаштування</text>
+<text x="105" y="542" font-family="Arial,sans-serif" font-size="23" fill="#b9c3d0">ai-publisher.org</text>
+</svg>

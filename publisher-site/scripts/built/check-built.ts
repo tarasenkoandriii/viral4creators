@@ -99,6 +99,11 @@ async function get(route: string): Promise<Page> {
 }
 
 const problems: string[] = [];
+const socialCard = fs.readFileSync(path.join(ROOT, 'public', 'og', 'publisher-uk.png'));
+assert.equal(socialCard.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'social card must be PNG');
+assert.equal(socialCard.readUInt32BE(16), 1200, 'social card width');
+assert.equal(socialCard.readUInt32BE(20), 630, 'social card height');
+
 const tags = (html: string, name: string) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, 'gi'))].map((m) => m[0]);
 const attr = (tag: string, a: string) => new RegExp(`\\s${a}="([^"]*)"`, 'i').exec(tag)?.[1] ?? null;
 const metaOf = (html: string, name: string) => {
@@ -176,6 +181,13 @@ async function main() {
     const href = canonical ? attr(canonical, 'href') : null;
     if (!canonical || (href !== want && !(route === '/' && href === origin)))
       problems.push(`${route}: canonical ${canonical ? attr(canonical, 'href') : 'нет'} ≠ ${want}`);
+    const cardUrl = `${origin}/og/publisher-uk.png`;
+    if (metaOf(html, 'og:image') !== cardUrl || metaOf(html, 'twitter:image') !== cardUrl)
+      problems.push(`${route}: social image is missing or uses the wrong origin`);
+    if (metaOf(html, 'og:image:width') !== '1200' || metaOf(html, 'og:image:height') !== '630')
+      problems.push(`${route}: social image dimensions must be 1200×630`);
+    if (metaOf(html, 'twitter:card') !== 'summary_large_image' || !metaOf(html, 'og:image:alt')?.trim())
+      problems.push(`${route}: missing accessible social-card metadata`);
     const robots = metaOf(html, 'robots');
     if (expectIndexable && robots !== 'index, follow')
       problems.push(`${route}: robots «${robots}», ждали index, follow`);
@@ -227,6 +239,12 @@ async function main() {
       const ctaAt = html.indexOf('data-cta="material-next"');
       if (bodyAt < 0 || ctaAt < bodyAt) problems.push(`${route}: CTA не после основного текста`);
     }
+  }
+
+  if (BASE) {
+    const card = await get('/og/publisher-uk.png');
+    if (card.status !== 200 || !card.headers['content-type']?.startsWith('image/png'))
+      problems.push('social card: HTTP 200 and image/png are required');
   }
 
   // 404 — noindex.
