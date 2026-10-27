@@ -1,0 +1,17 @@
+{
+  "snapshotIntervalSec": 600,
+  "uploadPollSec": 120,
+  "uploaderDeadlineSec": 150,
+  "unchanged": {
+    "v4c-ffmpeg-canary-executor-1": {
+      "image": "sha256:408abb147f9a308990fac4b7a6456b1cb117b617312ad197b6302dfa1280472a",
+      "startedAt": "2026-10-26T21:51:34.76787547Z"
+    },
+    "viral4creators-liveloginrelay-h8avkz-live-login-relay-1": {
+      "image": "sha256:5955e474113829452e1246caf4b16eb6c583cd55f911451b15898fddc0c2cd78",
+      "startedAt": "2026-10-21T01:00:37.517939478Z"
+    }
+  },
+  "ready": true,
+  "uploaderImage": "sha256:dd9f7f177f25bd9c79aaab6c95505cc32b2726020db308c852806b6a0853b770"
+}

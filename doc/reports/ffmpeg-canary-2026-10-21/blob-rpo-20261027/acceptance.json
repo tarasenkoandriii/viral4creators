@@ -1,0 +1,30 @@
+{
+  "backup": {
+    "ok": true,
+    "checkedAt": 1793088133818,
+    "snapshot": "ffmpeg-server-20261027T080157Z.db",
+    "sha256": "c5473772530a4b075ba96f8138e10479a56ea0611446593a1221a52f9562237c",
+    "bytes": 625388,
+    "snapshotBytes": 2715648,
+    "storedSha256": "b27624785e3ec57e833983d25e69021330550be94188226467e518394eff10ba",
+    "compression": "gzip",
+    "jobs": 181,
+    "idempotencyKeys": 181,
+    "privateAccess": true,
+    "anonymousStatus": 403,
+    "readbackVerified": true,
+    "pruned": 0,
+    "monthReservedBytes": 8772332,
+    "monthAttempts": 4
+  },
+  "verifiedSnapshotAgeSec": 16.818,
+  "compressionRatio": 4.342,
+  "effectiveSnapshotIntervalSec": 600,
+  "uploadPollSec": 120,
+  "service": {
+    "Result": "success",
+    "ExecMainStatus": "0",
+    "ActiveState": "inactive"
+  },
+  "continuousRpoSloProven": false
+}
