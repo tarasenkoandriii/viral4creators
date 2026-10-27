@@ -19,7 +19,8 @@
 // Включение/выключение и сама настройка консультанта (бюджет, модель,
 // проактивный режим) по-прежнему живут на /settings (AssistantSettingsCard).
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   getAssistantAdmin,
   getDemoQualityChecks,
@@ -120,6 +121,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
  * фильтром и, если указан `tempo`, панель темпа этого ролика; `quality`
  * — отчёт проверки качества этого ролика. */
 interface VideoTabInit {
+  assetId: string;
   subjectKey: string;
   locale: string;
   reviewed: '' | 'true' | 'false';
@@ -127,13 +129,14 @@ interface VideoTabInit {
   quality: string | null;
 }
 
-function readDeepLink(): { tab: Tab | null; video: VideoTabInit } {
-  const p = new URLSearchParams(window.location.search);
+function readDeepLink(query: string): { tab: Tab | null; video: VideoTabInit } {
+  const p = new URLSearchParams(query);
   const t = p.get('tab');
   const r = p.get('reviewed');
   return {
     tab: t === 'exchanges' || t === 'videos' || t === 'data-status' ? t : null,
     video: {
+      assetId: p.get('asset') ?? '',
       subjectKey: p.get('subjectKey') ?? '',
       locale: p.get('locale') ?? '',
       reviewed: r === 'true' || r === 'false' ? r : '',
@@ -144,14 +147,19 @@ function readDeepLink(): { tab: Tab | null; video: VideoTabInit } {
 }
 
 export default function AssistantAdminPage() {
+  return <Suspense fallback={<p>Загрузка раздела…</p>}><AssistantAdminContent /></Suspense>;
+}
+
+function AssistantAdminContent() {
+  const query = useSearchParams().toString();
   const [tab, setTab] = useState<Tab>('exchanges');
   const [videoInit, setVideoInit] = useState<VideoTabInit | null>(null);
 
   useEffect(() => {
-    const link = readDeepLink();
+    const link = readDeepLink(query);
     if (link.tab) setTab(link.tab);
     setVideoInit(link.video);
-  }, []);
+  }, [query]);
 
   return (
     <div className="page">
@@ -182,7 +190,7 @@ export default function AssistantAdminPage() {
       </div>
 
       {tab === 'exchanges' && <ExchangesTab />}
-      {tab === 'videos' && <VideoContentTab key={videoInit ? 'linked' : 'plain'} init={videoInit} />}
+      {tab === 'videos' && <VideoContentTab key={JSON.stringify(videoInit)} init={videoInit} />}
       {tab === 'data-status' && <DataStatusTab />}
     </div>
   );
@@ -452,6 +460,7 @@ function isSiteTutorialDemoSlot(subjectKey: string): boolean {
 }
 
 function VideoContentTab({ init }: { init: VideoTabInit | null }) {
+  const [assetId, setAssetId] = useState(init?.assetId ?? '');
   const [subjectKey, setSubjectKey] = useState(init?.subjectKey ?? '');
   const [locale, setLocale] = useState(init?.locale ?? '');
   const [reviewed, setReviewedFilter] = useState<'' | 'true' | 'false'>(init?.reviewed ?? '');
@@ -529,6 +538,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   const load = useCallback(() => {
     setError(null);
     getTutorialVideoAssets({
+      assetId: assetId || undefined,
       subjectKey: subjectKey.trim() || undefined,
       locale: locale || undefined,
       reviewed: reviewed === '' ? undefined : reviewed === 'true',
@@ -537,7 +547,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
     })
       .then(setResult)
       .catch((e) => setError(errText(e)));
-  }, [subjectKey, locale, reviewed, page]);
+  }, [assetId, subjectKey, locale, reviewed, page]);
 
   useEffect(() => {
     load();
@@ -712,6 +722,8 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
         Ролики демо обучающего лендинга (<code>site-tutorial-demo-1..3</code>, витрина-полигон) консультанту
         не выдаются: на лендинг их выводит только галочка «В демо обучающего лендинга» у одобренного ролика.
       </p>
+
+      {assetId && <p role="status">Выбран ролик <code>{assetId}</code>. <button type="button" onClick={() => { setAssetId(''); setPage(1); }}>Показать все ролики</button></p>}
 
       <details style={{ marginBottom: 16 }}>
         <summary>Очередь качества: общий остаток</summary>

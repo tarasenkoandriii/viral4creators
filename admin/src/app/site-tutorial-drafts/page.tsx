@@ -16,7 +16,8 @@
 // конвейера. Одобрение запускает её; поэтому кнопка «Одобрить» стоит
 // ПОД кадрами, а не над ними.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   approveClientSiteDraft,
   getClientSiteDraft,
@@ -101,6 +102,12 @@ function stepsOfRounds(
 }
 
 export default function SiteTutorialDraftsPage() {
+  return <Suspense fallback={<p>Загрузка черновика…</p>}><SiteTutorialDraftsContent /></Suspense>;
+}
+
+function SiteTutorialDraftsContent() {
+  const params = useSearchParams();
+  const linkedDraftId = params.get('open') ?? params.get('draft');
   const [status, setStatus] = useState<'' | ClientSiteDraftStatus>(
     'PENDING_REVIEW',
   );
@@ -169,13 +176,12 @@ export default function SiteTutorialDraftsPage() {
 
   // Переход с «Обзора» (дашборд внимания): `?open=<id>` сразу
   // раскрывает карточку этого черновика — один раз, при входе.
-  const deepLinked = useRef(false);
+  const deepLinked = useRef<string | null>(null);
   useEffect(() => {
-    if (deepLinked.current) return;
-    deepLinked.current = true;
-    const id = new URLSearchParams(window.location.search).get('open');
-    if (id) void open(id);
-  }, [open]);
+    if (!linkedDraftId || deepLinked.current === linkedDraftId) return;
+    deepLinked.current = linkedDraftId;
+    void open(linkedDraftId);
+  }, [linkedDraftId, open]);
 
   async function act(run: () => Promise<unknown>) {
     setBusy(true);
@@ -194,6 +200,9 @@ export default function SiteTutorialDraftsPage() {
   }
 
   const pages = result ? Math.ceil(result.total / PAGE_SIZE) : 1;
+  // A direct link may target an approved draft outside the current page/filter.
+  const pinned = details && openId === details.id && !result?.items.some((r) => r.id === details.id) ? details : null;
+  const rows = pinned ? [pinned, ...(result?.items ?? [])] : (result?.items ?? []);
   const detailRounds = details
     ? stepsOfRounds(details.steps, details.stepsPerRound)
     : [];
@@ -230,9 +239,10 @@ export default function SiteTutorialDraftsPage() {
 
       {error && <p style={{ color: '#b00' }}>{error}</p>}
       {!result && <p>Загрузка…</p>}
-      {result && result.items.length === 0 && <p>Ничего нет.</p>}
+      {pinned && <p role="status">Выбранный черновик показан отдельно от текущего фильтра списка.</p>}
+      {result && rows.length === 0 && <p>Ничего нет.</p>}
 
-      {result?.items.map((row) => (
+      {rows.map((row) => (
         <section
           key={row.id}
           style={{

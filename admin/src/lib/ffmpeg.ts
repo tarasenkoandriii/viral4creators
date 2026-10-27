@@ -255,8 +255,8 @@ const PRODUCT_PAGE: Record<FfmpegProduct, string> = {
   'audio-track': '/sessions',
   portfolio: '/portfolio-items',
   story: '/story-tales',
-  'tutorial-runner': '/tutorial-scenarios',
-  'tutorial-video-versions': '/tutorial-scenarios',
+  'tutorial-runner': '/assistant?tab=videos',
+  'tutorial-video-versions': '/assistant?tab=videos',
   'shared-video': '/shared-videos',
   'client-site-tutorial': '/site-tutorial-drafts',
 };

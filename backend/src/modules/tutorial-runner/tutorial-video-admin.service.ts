@@ -47,6 +47,7 @@ import {
 } from '../../common/tutorial-knowledge/generated';
 
 export interface TutorialVideoListFilter {
+  assetId?: string;
   subjectKey?: string;
   locale?: string;
   reviewed?: boolean;
@@ -97,6 +98,7 @@ export class TutorialVideoAdminService {
 
   async list(filter: TutorialVideoListFilter) {
     const where = {
+      ...(filter.assetId ? { id: filter.assetId } : {}),
       subjectKey: filter.subjectKey || undefined,
       locale: filter.locale || undefined,
       reviewed: filter.reviewed,

@@ -97,7 +97,7 @@ function OutputActions({ jobId, file, available, reason }: { jobId: string; file
     const served = previewKind(link.mime ?? file.mime);
     if (purpose === 'preview' && kind && served) {
       setPreview({ kind: served, url: link.url, expiresAt: link.expiresAt });
-      setNote(`Предпросмотр загружен по ссылке до ${kyivTime(link.expiresAt)}. Воспроизведение — только по вашей команде.`);
+      setNote(`Ссылка для предпросмотра действует до ${kyivTime(link.expiresAt)}. Для загрузки и воспроизведения нажмите Play.`);
       return;
     }
     // Скачивание: временная ссылка не остаётся в DOM.

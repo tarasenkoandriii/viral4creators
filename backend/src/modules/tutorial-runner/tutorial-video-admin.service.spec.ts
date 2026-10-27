@@ -55,6 +55,19 @@ function build() {
 }
 
 describe('TutorialVideoAdminService.list (§4.9, этап 99)', () => {
+  it('точный переход на asset сохраняет изоляцию клиентских обучалок', async () => {
+    const { service, prisma } = build();
+    await service.list({ assetId: 'asset-17', page: 1, pageSize: 20 });
+    const where = expect.objectContaining({
+      id: 'asset-17',
+      clientSiteDraftId: null,
+    });
+    expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where }),
+    );
+    expect(prisma.tutorialVideoAsset.count).toHaveBeenCalledWith({ where });
+  });
+
   it('передаёт фильтры в findMany/count как есть и считает пагинацию', async () => {
     const { service, prisma } = build();
     await service.list({

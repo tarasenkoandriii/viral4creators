@@ -10,9 +10,10 @@
 import { spawnSync } from 'child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import {
   planSlideshow,
+  planBoundedSlideshow,
   frameSpansSeconds,
   narrationFrameSeconds,
   SlideshowMotion,
@@ -76,12 +77,16 @@ function localAssemble(
   files: Record<string, string>,
   out: string,
 ): void {
-  let cmd = plan.commands[0];
-  for (const [key, url] of Object.entries(plan.inputs)) {
-    cmd = cmd.split(`{{${key}}}`).join(files[url] ?? url);
+  for (const command of plan.commands) {
+    let cmd = command;
+    for (const [key, url] of Object.entries(plan.inputs)) {
+      cmd = cmd.split(`{{${key}}}`).join(files[url] ?? url);
+    }
+    cmd = cmd.replace(/\{\{([^}]+)\}\}/g, (_match, name: string) =>
+      name === plan.outputName ? out : join(dirname(out), name),
+    );
+    run(`ffmpeg -y -hide_banner -loglevel error ${cmd}`);
   }
-  cmd = cmd.split(`{{${plan.outputName}}}`).join(out);
-  run(`ffmpeg -y -hide_banner -loglevel error ${cmd}`);
 }
 
 /** Интервалы звучания по 10-мс окнам (моно 44.1 кГц, s16le). */
@@ -315,6 +320,44 @@ maybe('приёмка темпа на настоящем ffmpeg', () => {
       },
     );
   }
+
+  it.each<SlideshowMotion>(['none', 'fade'])(
+    'многоэтапная сборка %s сохраняет звук до и после границы восьмого кадра',
+    (motion) => {
+      const slides = Array.from({ length: 9 }, (_, stepIndex) => ({
+        stepIndex,
+        url: frames[0].image.url,
+        seconds: 1.4,
+        ...([0, 7, 8].includes(stepIndex)
+          ? { audioUrl: frames[2].speech!.url }
+          : {}),
+      }));
+      const plan = planBoundedSlideshow(slides, { motion })!;
+      expect(plan.commands).toHaveLength(3);
+      const out = join(dir, `bounded-${motion}.mp4`);
+      localAssemble(plan, files, out);
+      expect(
+        checkTutorialVideo(probeMp4(readFileSync(out)), {
+          durationMs: plan.durationMs,
+          hasAudio: true,
+          width: 720,
+          height: 1560,
+        }),
+      ).toMatchObject({ ok: true, problems: [] });
+      const spans = frameSpansSeconds(slides, motion);
+      const runs = voicedRuns(out, dir);
+      expect(runs).toHaveLength(3);
+      [0, 7, 8].forEach((frame, index) => {
+        expect(Math.abs(runs[index].start - spans[frame].start)).toBeLessThan(
+          0.04,
+        );
+        expect(runs[index].end - runs[index].start).toBeGreaterThan(
+          SPEECH[2]! - 0.04,
+        );
+        expect(runs[index].end).toBeLessThanOrEqual(spans[frame].end + 0.01);
+      });
+    },
+  );
 
   it('техническая проверка ловит файл не той длины', () => {
     const m = buildTutorialManifest({

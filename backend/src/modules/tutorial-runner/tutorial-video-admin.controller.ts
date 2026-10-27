@@ -63,9 +63,11 @@ export class TutorialVideoAdminController {
     @Query('reviewed') reviewed?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('assetId') assetId?: string,
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.videoAdmin.list({
+      assetId: assetId?.trim() || undefined,
       subjectKey: subjectKey?.trim() || undefined,
       locale: locale?.trim() || undefined,
       reviewed: parseBool(reviewed),

@@ -51,7 +51,11 @@ export async function findFfmpegJobOwners(
     }),
     prisma.tutorialVideoVersion.findFirst({
       where: { jobId },
-      select: { id: true, assetId: true },
+      select: {
+        id: true,
+        assetId: true,
+        asset: { select: { clientSiteDraftId: true } },
+      },
     }),
     prisma.tutorialDemoQualityCheck.findFirst({
       where: { signalsJobId: jobId },
@@ -82,22 +86,24 @@ export async function findFfmpegJobOwners(
         ? `Tutorial сайта клиента: черновик ${asset.clientSiteDraftId}`
         : `Tutorial: ролик ${asset.id}`,
       href: asset.clientSiteDraftId
-        ? `/site-tutorial-drafts?draft=${encodeURIComponent(asset.clientSiteDraftId)}`
-        : `/tutorial-scenarios?asset=${encodeURIComponent(asset.id)}`,
+        ? `/site-tutorial-drafts?open=${encodeURIComponent(asset.clientSiteDraftId)}`
+        : `/assistant?tab=videos&asset=${encodeURIComponent(asset.id)}`,
     });
   if (version)
     owners.push({
       kind: 'tutorial-version',
       id: version.id,
       label: `Tutorial: версия ${version.id} ролика ${version.assetId}`,
-      href: `/tutorial-scenarios?asset=${encodeURIComponent(version.assetId)}`,
+      href: version.asset?.clientSiteDraftId
+        ? `/site-tutorial-drafts?open=${encodeURIComponent(version.asset.clientSiteDraftId)}`
+        : `/assistant?tab=videos&asset=${encodeURIComponent(version.assetId)}`,
     });
   if (quality)
     owners.push({
       kind: 'tutorial-quality',
       id: quality.id,
       label: `Проверка качества демо ${quality.id}`,
-      href: `/tutorial-scenarios?asset=${encodeURIComponent(quality.assetId)}`,
+      href: `/assistant?tab=videos&asset=${encodeURIComponent(quality.assetId)}`,
     });
   if (portfolio)
     owners.push({

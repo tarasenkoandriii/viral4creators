@@ -1014,6 +1014,7 @@ export function seedFixtureUser() {
 // backend/src/modules/tutorial-runner/tutorial-video-admin.*, этап 99) ──
 
 export function getTutorialVideoAssets(params: {
+  assetId?: string;
   subjectKey?: string;
   locale?: string;
   reviewed?: boolean;
@@ -1021,6 +1022,7 @@ export function getTutorialVideoAssets(params: {
   pageSize?: number;
 }) {
   return apiGet<TutorialVideoListResult>('/admin/tutorial-video-assets', {
+    assetId: params.assetId,
     subjectKey: params.subjectKey,
     locale: params.locale,
     reviewed: params.reviewed === undefined ? undefined : String(params.reviewed),
