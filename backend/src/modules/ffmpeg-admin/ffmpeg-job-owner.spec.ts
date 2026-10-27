@@ -46,10 +46,16 @@ describe('FFmpeg Tutorial operation navigation', () => {
           assetId: 'client-asset',
           asset: { clientSiteDraftId: 'draft-1' },
         },
+        tutorialDemoQualityCheck: {
+          id: 'client-quality',
+          assetId: 'client-asset',
+          asset: { clientSiteDraftId: 'draft-1' },
+        },
       }),
       'selfhosted:job-2',
     );
     expect(owners.map((o) => o.href)).toEqual([
+      '/site-tutorial-drafts?open=draft-1',
       '/site-tutorial-drafts?open=draft-1',
       '/site-tutorial-drafts?open=draft-1',
     ]);

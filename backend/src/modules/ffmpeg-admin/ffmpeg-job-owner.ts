@@ -59,7 +59,11 @@ export async function findFfmpegJobOwners(
     }),
     prisma.tutorialDemoQualityCheck.findFirst({
       where: { signalsJobId: jobId },
-      select: { id: true, assetId: true },
+      select: {
+        id: true,
+        assetId: true,
+        asset: { select: { clientSiteDraftId: true } },
+      },
     }),
     prisma.portfolioItem.findFirst({
       where: { watermarkJobId: jobId },
@@ -103,7 +107,9 @@ export async function findFfmpegJobOwners(
       kind: 'tutorial-quality',
       id: quality.id,
       label: `Проверка качества демо ${quality.id}`,
-      href: `/assistant?tab=videos&asset=${encodeURIComponent(quality.assetId)}`,
+      href: quality.asset?.clientSiteDraftId
+        ? `/site-tutorial-drafts?open=${encodeURIComponent(quality.asset.clientSiteDraftId)}`
+        : `/assistant?tab=videos&asset=${encodeURIComponent(quality.assetId)}`,
     });
   if (portfolio)
     owners.push({
