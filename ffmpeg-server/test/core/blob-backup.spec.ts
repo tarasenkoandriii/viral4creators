@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
 
 const { plan, sync } = jest.requireActual<{
@@ -20,7 +21,7 @@ it.each([
   { name: '../wrong.db', bytes: 100, ledger: {} },
   { name: 'ffmpeg-server-20261025T000000Z.db', bytes: 100, ledger: {} },
   { name, bytes: 9 * 1024 ** 2, ledger: {} },
-  { name, bytes: 100, ledger: { attempts: 3200 } },
+  { name, bytes: 100, ledger: { attempts: 4800 } },
   { name, bytes: 100, ledger: { bytes: 12 * 1024 ** 3 } },
 ])('rejects invalid/stale/over-budget snapshot: %j', (args) => {
   expect(() => plan({ ...args, now })).toThrow();
@@ -55,7 +56,9 @@ describe('private Blob backup', () => {
         .mockResolvedValue({ url: 'https://private.test/snapshot.db' }),
       get: jest.fn().mockImplementation(async () => ({
         statusCode: 200,
-        stream: Readable.from([valid ? body : Buffer.from('corrupt')]),
+        stream: Readable.from([
+          valid ? gzipSync(body) : Buffer.from('corrupt'),
+        ]),
       })),
       del: jest.fn(),
     };
@@ -78,10 +81,13 @@ describe('private Blob backup', () => {
       idempotencyKeys: 1,
     });
     expect(api.put).toHaveBeenCalledWith(
-      expect.any(String),
-      body,
+      expect.stringMatching(/\.db\.gz$/),
+      gzipSync(body),
       expect.objectContaining({ access: 'private', allowOverwrite: false }),
     );
+    expect(gunzipSync(api.put.mock.calls[0][1])).toEqual(body);
+    expect(result.snapshotBytes).toBe(body.length);
+    expect(result.bytes).toBeLessThan(body.length);
     expect(await sync(args)).toMatchObject({ ok: true, replay: true });
     expect(api.put).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(result)).not.toMatch(/test-only|private\.test/);
@@ -139,5 +145,36 @@ describe('private Blob backup', () => {
     ).rejects.toThrow('unexpected_store_object');
     expect(api.put).not.toHaveBeenCalled();
     expect(api.del).not.toHaveBeenCalled();
+  });
+  it('follows one retention page and rejects unbounded pagination', async () => {
+    const api = sdk();
+    api.list
+      .mockResolvedValueOnce({ blobs: [], hasMore: true, cursor: 'next-page' })
+      .mockResolvedValueOnce({
+        blobs: [],
+        hasMore: true,
+        cursor: 'third-page',
+      });
+    await expect(
+      sync({ sdk: api, snapshot, token: 'test-only', stateDir: root, now }),
+    ).rejects.toThrow('store_object_limit');
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+  it('accepts a bounded second retention page', async () => {
+    const api = sdk();
+    api.list
+      .mockResolvedValueOnce({ blobs: [], hasMore: true, cursor: 'next-page' })
+      .mockResolvedValueOnce({ blobs: [], hasMore: false });
+    expect(
+      await sync({
+        sdk: api,
+        snapshot,
+        token: 'test-only',
+        stateDir: root,
+        now,
+      }),
+    ).toMatchObject({ ok: true, compression: 'gzip' });
+    expect(api.list).toHaveBeenCalledTimes(2);
   });
 });

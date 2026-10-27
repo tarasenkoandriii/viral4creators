@@ -1,9 +1,9 @@
 [Unit]
-Description=Check for a new FFmpeg snapshot every five minutes
+Description=Check for a new FFmpeg snapshot every two minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitInactiveSec=5min
+OnUnitInactiveSec=2min
 Persistent=true
 Unit=v4c-ffmpeg-blob-backup.service
 
