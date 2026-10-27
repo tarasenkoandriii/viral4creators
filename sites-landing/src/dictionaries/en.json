@@ -149,7 +149,11 @@
     "bot": "Crawler and opt-out",
     "integrations": "Install on your platform",
     "docs": "Assistant docs",
-    "badge": "in development"
+    "badge": "in development",
+    "qa": "Checks. Findings. Reports.",
+    "hands-free": "Ask your website by voice",
+    "handsFreeBadge": "Limited pilot · Confirmation · Stop",
+    "qaBadge": "Manual checks · Private evidence · PDF"
   },
   "home": {
     "hero": {

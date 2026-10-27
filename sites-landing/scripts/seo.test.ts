@@ -196,3 +196,13 @@ assert.equal(localeFromAcceptLanguage(''), 'en');
 assert.equal(localeFromAcceptLanguage('uk;q=0'), 'en');
 
 console.log(`ok   SEO: SITE_URL (${cases.length} случаев × 2 копии, build падает, lint — нет), alternates, метаданные ${metaCount} страниц × локалей с OG-файлами, sitemap ${sm.length} адресов, robots, Accept-Language`);
+
+// Product previews must not silently fall back to the generic assistant card.
+for (const locale of locales) {
+  for (const product of ['qa', 'hands-free'] as const) {
+    const meta = pageMetadata(product, locale);
+    assert.ok(JSON.stringify(meta.openGraph).includes(`/og/${product}-${locale}.jpg`));
+    assert.ok(JSON.stringify(meta.twitter).includes(`/og/${product}-${locale}.jpg`));
+    assert.notDeepEqual(fs.readFileSync(path.join(process.cwd(), `public/og/${product}-${locale}.jpg`)), fs.readFileSync(path.join(process.cwd(), `public/og/assistant-${locale}.jpg`)));
+  }
+}

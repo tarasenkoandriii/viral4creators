@@ -26,7 +26,7 @@ import { brandDisplayName } from '../src/brand.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LOCALES = ['uk', 'en', 'ru'];
-const ALL_PAGES = ['home', 'assistant', 'how-it-works', 'widget', 'try', 'bot', 'integrations', 'docs', 'security', 'pricing', 'faq', 'pilot'];
+const ALL_PAGES = ['qa', 'hands-free', 'home', 'assistant', 'how-it-works', 'widget', 'try', 'bot', 'integrations', 'docs', 'security', 'pricing', 'faq', 'pilot'];
 // `npm run og -- --only widget` — пересобрать только эти карточки (остальные
 // файлы не трогаются: JPEG пересъёмки побайтно не совпадает).
 const onlyIdx = process.argv.indexOf('--only');
