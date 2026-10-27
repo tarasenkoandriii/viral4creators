@@ -1,6 +1,6 @@
 # Base de conocimiento del consultor de IA de viral4creators
 
-_Собрано автоматически 2026-10-16 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-10-27 из lending/frontend/backend; коммит — local._
 
 ## Secciones de la mini-app
 
@@ -94,7 +94,7 @@ MP4, MOV y AVI de hasta 100 MB, o simplemente un enlace a un video público de Y
 Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo exacto depende del motor de generación elegido (Grok por defecto; también está disponible Google Veo 3.1 con los modos Fast/Standard) y de la carga actual.
 
 **¿Cuánto cuesta?**
-Por ahora, nada: los tres planes — Lite, Standard y Premium — son gratuitos y se cambian directamente desde la aplicación. Es un período de prueba; cuando se introduzcan los pagos, lo que ya hayas hecho seguirá siendo tuyo. Más adelante, Lite pasará a ser condicionalmente gratuito — a cambio de dar «me gusta» al canal de YouTube del proyecto y enviar algunos enlaces al servicio.
+Cambiar entre Lite, Standard y Premium es gratuito actualmente. Las generaciones están sujetas a cuotas diarias; no hay un número fijo de vídeos, ya que el volumen disponible depende de las operaciones elegidas. La aplicación indica cuándo se agota una cuota. Esto no significa que todos los productos sean gratuitos: los pasos de pago de Story-Tales se cobran por separado, con un presupuesto antes de empezar.
 
 **¿En qué se diferencian los planes entre sí?**
 Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16; el video de felicitación y el boceto de producto con IA están disponibles en cualquier plan. Standard añade la verificación de relevancia, la auditoría del video, el manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre, clonación de voz, el tutorial sobre el sitio del cliente, la publicación y el feed. Premium es Standard más la biblioteca de análisis listos y el doblaje: el audio de Veo se reemplaza por tu voz por completo. El plan se cambia en cualquier momento y no toca los proyectos, videos ni análisis ya creados.

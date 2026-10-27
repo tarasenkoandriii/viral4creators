@@ -1,6 +1,6 @@
 # Wissensdatenbank des viral4creators-KI-Beraters
 
-_Собрано автоматически 2026-10-16 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-10-27 из lending/frontend/backend; коммит — local._
 
 ## Bereiche der Mini-App
 
@@ -94,7 +94,7 @@ MP4, MOV und AVI bis 100 MB, oder einfach ein Link zu einem öffentlichen YouTub
 Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die genaue Dauer hängt von der gewählten Generierungs-Engine ab (standardmäßig Grok, alternativ Google Veo 3.1 mit den Modi Fast/Standard) sowie der aktuellen Auslastung.
 
 **Was kostet das?**
-Derzeit nichts: Alle drei Tarife — Lite, Standard und Premium — sind kostenlos und lassen sich direkt in der App umschalten. Das ist eine Testphase; wenn eine Bezahlung eingeführt wird, bleibt bereits Erstelltes erhalten. Später soll Lite bedingt kostenlos werden — gegen ein Like des Projekt-YouTube-Kanals und einige an den Dienst gesendete Links.
+Der Wechsel zwischen Lite, Standard und Premium ist derzeit kostenlos. Für Generierungen gelten tägliche Kontingente. Eine feste Anzahl von Videos gibt es nicht, da der verfügbare Umfang von den gewählten Vorgängen abhängt. Die App zeigt an, wenn ein Kontingent aufgebraucht ist. Nicht alle Plattformprodukte sind kostenlos: Kostenpflichtige Story-Tales-Schritte werden separat nach einem Kostenvoranschlag vor dem Start berechnet.
 
 **Worin unterscheiden sich die Tarife?**
 Lite ist der minimale Weg: Referenzanalyse und ein Video in 16:9 oder 9:16; Grußvideo und KI-Produktskizze sind in jedem Tarif verfügbar. Standard ergänzt Relevanzprüfung, Video-Audit, Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse, Stimmklon, das Tutorial über die Website des Kunden, Veröffentlichung und Feed. Premium ist Standard plus Bibliothek fertiger Analysen und Dub: Der Veo-Ton wird vollständig durch Ihre Stimme ersetzt. Der Tarif lässt sich jederzeit wechseln und berührt bereits erstellte Projekte, Videos und Analysen nicht.

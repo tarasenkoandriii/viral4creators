@@ -1,6 +1,6 @@
 # viral4creators AI consultant knowledge base
 
-_Собрано автоматически 2026-10-16 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-10-27 из lending/frontend/backend; коммит — local._
 
 ## Mini-app sections
 
@@ -94,7 +94,7 @@ MP4, MOV and AVI up to 100MB, or simply a link to a public YouTube video — in 
 Once the prompt is approved, the video is usually ready in 3–5 minutes — the exact time depends on the chosen generation engine (Grok by default, Google Veo 3.1 with Fast/Standard modes is also available) and current load.
 
 **How much does it cost?**
-Right now, nothing: all three plans — Lite, Standard and Premium — are free and switch right inside the app. This is a rollout period; whatever you've already made stays yours once paid plans arrive. Later, Lite is planned to become conditionally free — in exchange for liking the project's YouTube channel and sending a few links to the service.
+Switching between Lite, Standard and Premium is currently free. Generation is subject to daily quotas; there is no fixed number of videos because the available volume depends on the operations you choose. The app shows when a quota is exhausted. This does not make every platform product free: paid Story-Tales steps are charged separately, with an estimate before you start.
 
 **What's the difference between the plans?**
 Lite is the minimal path: a reference breakdown and a 16:9 or 9:16 video; the greeting video and the AI product sketch are available on any plan. Standard adds the relevance check, the video audit, the brand manifest, your own scenes, photo character swaps, any aspect ratio, voice cloning, the tutorial from a client's website, publishing and the feed. Premium is Standard plus the library of ready-made breakdowns and dubbing: Veo's audio is replaced by your voice entirely. The plan can be changed at any time and does not touch projects, videos or breakdowns you have already made.
