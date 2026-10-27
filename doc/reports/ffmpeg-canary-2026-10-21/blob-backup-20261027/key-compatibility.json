@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "jobs": 181,
+  "encryptedPayloads": 0,
+  "decryptedPayloads": 0,
+  "verifiedFingerprints": 0,
+  "missingPayloadKeys": 0,
+  "missingHmacKeys": 0,
+  "invalidPayloads": 0,
+  "fingerprintMismatches": 0
+}

@@ -283,7 +283,48 @@ integrity=ok, 176 jobs, 176 idempotency keys, 2715648 байт.
 удалена, production БД не изменялась; секреты не копировались и
 расшифровка payload в этой проверке не выполнялась.
 
-Этап C целиком остаётся открытым: Mac не является always-on приёмником.
-Нужны согласованный постоянно доступный off-host storage/host и отдельная
-проверка восстановления секретов. Само наличие SQLite-копии эти задачи
-не закрывает. Nova и принятые ролики не менялись, платных вызовов нет.
+TTL и SQLite restore сами по себе не закрывают постоянно доступный
+off-host backup и восстановление секретов. После этой сверки владелец
+выбрал private Vercel Blob для постоянных копий; результат ниже.
+
+### Постоянный private Blob backup — 27.10.2026
+
+Владелец разрешил до $10/месяц на Vercel Blob. Создан один отдельный
+store `ffmpeg-private-backups` / `store_IzZ0UT8GyC5msPyu`, private, fra1.
+Public store с видео не изменён. Scoped token хранится root-only на первом
+VPS; отдельная переменная Production `FFMPEG_BACKUP_READ_WRITE_TOKEN`
+viral-backend обеспечивает доступ вне VPS. Другие credentials не заменены;
+payload/HMAC ключи не экспортировались. Временные локальные env/token
+файлы настройки удалены.
+
+Первый live upload/readback: 2715648 байт, SHA-256 совпал, integrity=ok,
+181 jobs / 181 idempotency keys, анонимный запрос 403.
+[Квитанция](blob-backup-20261027/first-upload.json). Это SQLite-копия,
+не медиа и не расшифрованные исходные URL/команды. Платных генераций нет.
+
+Контейнер uploader `830942885cc1` получает только snapshot, state и token
+этого store: read-only root, cap-drop ALL, 0.5 CPU / 128 MiB / 64 PIDs.
+API `6ecebb6ee029`, executor `408abb147f9a` и relay не перезапускались.
+После зелёного [CI 40467845259](https://github.com/tarasenkoandriii/viral4creators/actions/runs/40467845259)
+(437 тестов / 17 suites + 13 backup-проверок) включён systemd timer:
+проверка каждые 5 минут; первый автоматический запуск exit 0, тот же
+snapshot распознан как replay без новой загрузки.
+
+Ограничения: snapshot ≤8 MiB, store ≤6 GiB, хранение 7 дней, ≤3200
+попыток/месяц и ≤12 GiB месячного резерва. Дополнительная консервативная
+модель расходов останавливается выше $8, оставляя запас до разрешённых
+$10. Это ограничения uploader, не hard cap счёта Vercel. При текущем
+объёме расчётный расход порядка $1–2/месяц; источник тарифов и регламент
+в [OPERATIONS.md](../../../ffmpeg-server/docs/OPERATIONS.md).
+
+Новая команда verify-keys и 16 профильных тестов проверяют readonly
+совместимость payload/HMAC. Live helper нашёл 181 историческую запись,
+все нужные HMAC key IDs доступны, но encryptedPayloads=0: ни одного
+сохранённого payload для живой расшифровки нет. Поэтому это не доказательство
+восстановления секретов; [квитанция](blob-backup-20261027/key-compatibility.json).
+
+Открыто: отдельная off-host копия payload/HMAC ключей и полноценный secret
+restore; внешний alert о сбое/устаревшей копии; целевой RPO ≤15 минут.
+Текущая расчётная давность: API snapshot раз в 15 минут + обнаружение до
+5 минут + передача. Не объявляется полная приёмка disaster recovery.
+Ни один из этих пунктов не отключает уже работающий fallback.
