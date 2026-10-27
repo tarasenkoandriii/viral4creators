@@ -4,6 +4,7 @@
  *
  *   backup [dir]        — online backup сейчас (по умолчанию FFMPEG_SERVER_BACKUP_DIR)
  *   verify <file>       — integrity_check + счётчики (jobs, ключи идемпотентности)
+ *   verify-keys <file>  — read-only совместимость payload/HMAC, только счётчики
  *   restore <file>      — ТОЛЬКО при остановленном api: подменить БД копией;
  *                         режим принудительно recovery — приём и выдача
  *                         задач заблокированы до сверки (resume reconciled)
@@ -15,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadConfig } from '../config';
 import { Db } from '../db/database';
 import { runBackup } from './backup';
+import { verifySnapshotKeys } from './snapshot-keys';
 
 function out(obj: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -54,6 +56,12 @@ export async function cli(argv: string[], env = process.env): Promise<number> {
     }
   }
   const cfg = loadConfig(env);
+  if (cmd === 'verify-keys') {
+    if (!arg) return usage();
+    const result = verifySnapshotKeys(arg, cfg.payloadKeys, cfg.hmacKeys);
+    out(result);
+    return result.ok ? 0 : 1;
+  }
   if (cmd === 'backup') {
     const dir = arg ?? cfg.backup.dir;
     if (!dir) return usage();
@@ -98,7 +106,7 @@ export async function cli(argv: string[], env = process.env): Promise<number> {
 
 function usage(): number {
   process.stderr.write(
-    'usage: cli.js backup [dir] | verify <file> | restore <file>\n',
+    'usage: cli.js backup [dir] | verify <file> | verify-keys <file> | restore <file>\n',
   );
   return 2;
 }

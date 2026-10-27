@@ -97,6 +97,61 @@ backup'ом **не является**.
 
 ## 4. Restore drill
 
+### Приватная off-host копия Blob (27.10.2026)
+
+Отдельный private store `ffmpeg-private-backups`, `store_IzZ0UT8GyC5msPyu`,
+fra1; существующий public store с видео не используется. Отдельный static
+RW token этого store хранится на первом VPS в root-only файле
+`/opt/v4c-ffmpeg-blob-backup/blob-token` (0600). Его резервная выдача —
+отдельная переменная Production `FFMPEG_BACKUP_READ_WRITE_TOKEN` проекта
+viral-backend; публичные/client environment variables не используются.
+Payload/HMAC ключей сервера в этом файле, store или SQLite backup нет.
+
+`v4c-ffmpeg-blob-backup.timer` проверяет новый завершённый snapshot каждые
+5 минут; scheduler API создаёт его раз в 15 минут. Новая копия загружается
+только один раз, SHA-bound pathname не перезаписывается. После upload:
+private readback → SHA-256 → integrity_check и счётчики задач/ключей →
+анонимный запрос обязан получить 401/403/404. Только после этого удаляются
+старые копии собственного префикса `ffmpeg-sqlite/` старше 7 суток.
+Медиа не загружаются. Неизвестные объекты/пагинация сверх 1000 объектов
+останавливают uploader; чужие объекты не удаляются.
+
+Ограничения backup: один snapshot ≤8 MiB, store ≤6 GiB, месячный резерв
+≤12 GiB / 3200 попыток. Дополнительно консервативная модель расходов
+останавливает новые попытки выше $8: $0.15/GB × четыре возможных передачи
+плюс $0.50 на storage/ops. Владелец разрешил $10/месяц, $2 оставлены запасом.
+Это лимиты данного uploader, **не hard cap счёта Vercel**; текущие тарифы
+и общий account spend нужно сверять отдельно. При текущем snapshot около
+2.7 MB расчётный фактический расход порядка $1–2/месяц, без медиа и
+расходов других проектов. [Тарифы](https://vercel.com/docs/vercel-blob/usage-and-pricing).
+
+Запуск/контроль: `systemctl start v4c-ffmpeg-blob-backup.service`,
+`systemctl status v4c-ffmpeg-blob-backup.timer`,
+`journalctl -u v4c-ffmpeg-blob-backup.service`; квитанция
+`/opt/v4c-ffmpeg-blob-backup/state/status.json`, отдельный failure.json
+при ошибке SDK; ошибки wrapper также дают ненулевой exit systemd.
+Сопоставлять время status с snapshot: старый status не доказывает свежесть.
+Отключение: `systemctl disable --now v4c-ffmpeg-blob-backup.timer`.
+Старые локальные backup и pull на Mac сохраняются.
+
+Расчётная верхняя давность при здоровых scheduler/network — примерно
+20 минут + время передачи, а не обещанные ≤15 минут. RPO ≤15 минут и
+автоматическое внешнее оповещение о сбое ещё не подтверждены.
+
+Для восстановления скачать private snapshot с авторизацией, сверить
+SHA-256 из квитанции и выполнить `verify`, затем регламент ниже.
+Новая команда `node dist/ops/cli.js verify-keys <snapshot>` читает копию
+read-only и проверяет текущие payload/HMAC key rings: наличие исторических
+ключей, AEAD расшифровку и HMAC для сохранённых payload. Вывод — только
+счётчики; при отсутствии payload честно возвращает encryptedPayloads=0,
+это не доказательство расшифровки и не восстановление секретов после потери VPS.
+Код команды включён в исходники; текущий production API не перезапускался
+для её установки. Live-проверка helper выполнена в памяти контейнера.
+
+Постоянный backup не закрывает отдельное хранение и восстановление
+payload/HMAC-секретов. Без них SQLite сохраняет историю, но восстановление
+незавершённых заданий и безопасный replay может оказаться невозможным.
+
 Проводится на canary до production и далее раз в квартал. Фиксировать
 время начала/конца (RTO) и возраст копии (RPO).
 

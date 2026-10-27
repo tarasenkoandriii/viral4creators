@@ -1,0 +1,19 @@
+[Unit]
+Description=Private off-host FFmpeg SQLite backup to Vercel Blob
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/v4c-ffmpeg-blob-backup/push.py
+TimeoutStartSec=240
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/v4c-ffmpeg-blob-backup
+

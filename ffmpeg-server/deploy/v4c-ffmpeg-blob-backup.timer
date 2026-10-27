@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a new FFmpeg snapshot every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Persistent=true
+Unit=v4c-ffmpeg-blob-backup.service
+
+[Install]
+WantedBy=timers.target
