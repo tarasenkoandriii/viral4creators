@@ -24,13 +24,18 @@ export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
   const cfg = await getSiteConfig();
-  return pageMetadata('/', null, plainExcerpt(cfg.offer?.text) ?? dict.meta.homeDescription);
+  return pageMetadata(
+    '/',
+    null,
+    cfg.mode === 'closed' ? dict.home.closedNotice : (plainExcerpt(cfg.offer?.text) ?? dict.meta.homeDescription),
+  );
 }
 
 export default async function Home() {
   const [cfg, published] = await Promise.all([getSiteConfig(), listPublished()]);
   const h = dict.home;
   const offer = cfg.offer;
+  const closed = cfg.mode === 'closed';
   const faq = faqOf(cfg.faq);
   const example = published[0] ?? null;
   const md = { siteHost: siteHost() };
@@ -40,6 +45,11 @@ export default async function Home() {
         <p className="kicker">{fmt(h.kicker, { positioning: PUBLISHER_BRAND.positioning })}</p>
         <h1 id="hero-title">{offer?.title?.trim() || PUBLISHER_BRAND.name}</h1>
         <p className="lead">{h.lead}</p>
+        {closed ? (
+          <p className="pending" role="status">
+            {h.closedNotice}
+          </p>
+        ) : null}
         <Cta label={h.cta} id="home-hero" />
       </section>
       <MediaShowcase locale="uk" product="publisher" />
@@ -51,7 +61,7 @@ export default async function Home() {
             <Markdown source={offer.text} options={md} />
           </div>
         ) : (
-          <p className="pending">{h.offerMissing}</p>
+          <p className="pending">{closed ? h.offerClosed : h.offerMissing}</p>
         )}
       </section>
 
@@ -92,13 +102,17 @@ export default async function Home() {
             </p>
           </div>
         ) : (
-          <p className="pending">{h.exampleMissing}</p>
+          <p className="pending">{closed ? h.exampleClosed : h.exampleMissing}</p>
         )}
       </section>
 
       <section aria-labelledby="price-title" data-block="price">
         <h2 id="price-title">{h.priceTitle}</h2>
-        {offer?.priceNote?.trim() ? <p>{offer.priceNote}</p> : <p className="pending">{h.priceMissing}</p>}
+        {offer?.priceNote?.trim() ? (
+          <p>{offer.priceNote}</p>
+        ) : (
+          <p className="pending">{closed ? h.priceClosed : h.priceMissing}</p>
+        )}
         <h3>{h.priceFactorsTitle}</h3>
         <ul>
           {h.priceFactors.map((f) => (
@@ -114,7 +128,7 @@ export default async function Home() {
 
       <section aria-labelledby="faq-title" data-block="faq">
         <h2 id="faq-title">{h.faqTitle}</h2>
-        {faq.length ? <Faq items={faq} /> : <p className="pending">{h.faqMissing}</p>}
+        {faq.length ? <Faq items={faq} /> : <p className="pending">{closed ? h.faqClosed : h.faqMissing}</p>}
       </section>
 
       <section aria-labelledby="contacts-title" data-block="contacts">
