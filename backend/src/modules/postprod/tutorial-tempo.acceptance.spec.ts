@@ -322,18 +322,19 @@ maybe('приёмка темпа на настоящем ffmpeg', () => {
   }
 
   it.each<SlideshowMotion>(['none', 'fade'])(
-    'многоэтапная сборка %s сохраняет звук до и после границы восьмого кадра',
+    'многоэтапная сборка %s сохраняет звук на всех границах 30 экранов',
     (motion) => {
-      const slides = Array.from({ length: 9 }, (_, stepIndex) => ({
+      const voicedFrames = [0, 7, 8, 15, 16, 23, 24, 29];
+      const slides = Array.from({ length: 30 }, (_, stepIndex) => ({
         stepIndex,
         url: frames[0].image.url,
         seconds: 1.4,
-        ...([0, 7, 8].includes(stepIndex)
+        ...(voicedFrames.includes(stepIndex)
           ? { audioUrl: frames[2].speech!.url }
           : {}),
       }));
       const plan = planBoundedSlideshow(slides, { motion })!;
-      expect(plan.commands).toHaveLength(3);
+      expect(plan.commands).toHaveLength(5);
       const out = join(dir, `bounded-${motion}.mp4`);
       localAssemble(plan, files, out);
       expect(
@@ -346,8 +347,8 @@ maybe('приёмка темпа на настоящем ffmpeg', () => {
       ).toMatchObject({ ok: true, problems: [] });
       const spans = frameSpansSeconds(slides, motion);
       const runs = voicedRuns(out, dir);
-      expect(runs).toHaveLength(3);
-      [0, 7, 8].forEach((frame, index) => {
+      expect(runs).toHaveLength(voicedFrames.length);
+      voicedFrames.forEach((frame, index) => {
         expect(Math.abs(runs[index].start - spans[frame].start)).toBeLessThan(
           0.04,
         );
