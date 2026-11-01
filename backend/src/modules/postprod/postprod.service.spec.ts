@@ -242,12 +242,12 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(tts.synthesize).toHaveBeenCalledWith(
         expect.objectContaining({ voiceId: 'brand-1' }),
       );
-      expect(blob.uploadBuffer.mock.calls[0][0]).toBe(
-        'sessions/s1/voiceover.mp3',
+      expect(blob.uploadBuffer.mock.calls[0][0]).toMatch(
+        /^sessions\/s1\/voiceover-[a-f0-9]{16}\.mp3$/,
       );
       const arg = api.submit.mock.calls[0][0];
       expect(arg.inputs.voice).toBe(
-        'https://blob.test/sessions/s1/voiceover.mp3',
+        `https://blob.test/${blob.uploadBuffer.mock.calls[0][0]}`,
       );
       expect(arg.commands[0]).toContain('amix');
       expect(arg.commands[0]).toContain('crop=');

@@ -1413,7 +1413,9 @@ export class PostProductionService {
       isGreeting: !!session?.greetingBriefSnapshot,
       recoverBackground:
         video.backgroundStatus === 'failed' &&
-        !!video.backgroundError?.includes('(timeout)'),
+        !!video.backgroundError &&
+        (video.backgroundError.includes('(timeout)') ||
+          video.backgroundError.includes('новая не запускалась')),
       preparedGreetingVoice: video.preparedGreetingVoice,
       crop,
       voiceMode,
@@ -1634,8 +1636,11 @@ export class PostProductionService {
     }
 
     try {
+      // Immutable narration URLs keep FFmpeg deduplication and CDN caches
+      // from returning a previous revoice after the bytes have changed.
       const pathname =
-        pathnameOverride ?? `sessions/${sessionId}/voiceover.mp3`;
+        pathnameOverride ??
+        `sessions/${sessionId}/voiceover-${createHash('sha256').update(outcome.audio).digest('hex').slice(0, 16)}.mp3`;
       const { url } = await this.blob.uploadBuffer(
         pathname,
         outcome.audio,
