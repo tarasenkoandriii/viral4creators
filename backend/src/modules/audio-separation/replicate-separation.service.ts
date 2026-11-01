@@ -320,7 +320,15 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
           ...(request.recoverExisting ? { reused: true } : {}),
           ...(predictionId ? { predictionId } : {}),
           reason:
-            'разделение прошло, но фоновых стемов в ответе нет — проверьте REPLICATE_DEMUCS_INPUT и схему модели',
+            'разделение прошло, но фоновых стемов в ответе нет; схема выхода: ' +
+            JSON.stringify(prediction.output ?? null, (_key, value: unknown) =>
+              typeof value === 'string'
+                ? {
+                    length: value.length,
+                    isHttps: value.startsWith('https://'),
+                  }
+                : value,
+            ).slice(0, 600),
         };
       }
       return {
