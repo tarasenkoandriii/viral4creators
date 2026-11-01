@@ -557,54 +557,61 @@ describe('UiSnapshotAdminController — просмотр снимков', () => 
   });
 
   it('сводка: счётчики сведены по маршруту, изменчивые — сверху', async () => {
-    const { controller, prisma, req } = build();
-    prisma.uiSnapshot.groupBy
-      .mockResolvedValueOnce([
-        {
-          routeKey: 'a-stable',
-          _count: { _all: 720 },
-          _max: { createdAt: t('2026-09-30T10:00:00Z') },
-        },
-        {
-          routeKey: 'z-blinking',
-          _count: { _all: 700 },
-          _max: { createdAt: t('2026-09-30T10:00:00Z') },
-        },
-      ])
-      .mockResolvedValueOnce([{ routeKey: 'z-blinking', _count: { _all: 40 } }])
-      .mockResolvedValueOnce([{ routeKey: 'a-stable', _count: { _all: 3 } }]);
-    prisma.uiSnapshot.findMany.mockResolvedValueOnce([
-      { createdAt: t('2026-09-30T09:58:00Z') },
-    ]);
+    jest.useFakeTimers({ now: t('2026-09-30T12:00:00Z') });
+    try {
+      const { controller, prisma, req } = build();
+      prisma.uiSnapshot.groupBy
+        .mockResolvedValueOnce([
+          {
+            routeKey: 'a-stable',
+            _count: { _all: 720 },
+            _max: { createdAt: t('2026-09-30T10:00:00Z') },
+          },
+          {
+            routeKey: 'z-blinking',
+            _count: { _all: 700 },
+            _max: { createdAt: t('2026-09-30T10:00:00Z') },
+          },
+        ])
+        .mockResolvedValueOnce([
+          { routeKey: 'z-blinking', _count: { _all: 40 } },
+        ])
+        .mockResolvedValueOnce([{ routeKey: 'a-stable', _count: { _all: 3 } }]);
+      prisma.uiSnapshot.findMany.mockResolvedValueOnce([
+        { createdAt: t('2026-09-30T09:58:00Z') },
+      ]);
 
-    const res = await controller.snapshotSummary(req, '2026-09-29T10:00:00Z');
+      const res = await controller.snapshotSummary(req, '2026-09-29T10:00:00Z');
 
-    expect(res.routes.map((r) => r.routeKey)).toEqual([
-      'z-blinking',
-      'a-stable',
-    ]);
-    expect(res.routes[0]).toMatchObject({
-      total: 700,
-      changed: 40,
-      errors: 0,
-      recentChangedAt: [t('2026-09-30T09:58:00Z')],
-    });
-    expect(res.routes[1]).toMatchObject({
-      total: 720,
-      changed: 0,
-      errors: 3,
-      recentChangedAt: [],
-    });
-    // Времена перемен запрашиваются только там, где перемены были.
-    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledTimes(1);
-    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          routeKey: 'z-blinking',
-          changed: true,
+      expect(res.routes.map((r) => r.routeKey)).toEqual([
+        'z-blinking',
+        'a-stable',
+      ]);
+      expect(res.routes[0]).toMatchObject({
+        total: 700,
+        changed: 40,
+        errors: 0,
+        recentChangedAt: [t('2026-09-30T09:58:00Z')],
+      });
+      expect(res.routes[1]).toMatchObject({
+        total: 720,
+        changed: 0,
+        errors: 3,
+        recentChangedAt: [],
+      });
+      // Времена перемен запрашиваются только там, где перемены были.
+      expect(prisma.uiSnapshot.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.uiSnapshot.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            routeKey: 'z-blinking',
+            changed: true,
+          }),
         }),
-      }),
-    );
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('сводка «30 дней» по часам клиента проходит, хотя сервер позже', () => {
