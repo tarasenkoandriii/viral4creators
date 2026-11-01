@@ -235,13 +235,10 @@ describe('ReplicateSeparationService — вызов', () => {
       isolate_stem: 'none',
       format: 'mp3',
     });
-    expect(out.ok).toBe(true);
-    if (out.ok)
-      expect(out.backgroundUrls).toEqual([
-        'https://o/b.mp3',
-        'https://o/d.mp3',
-        'https://o/o.mp3',
-      ]);
+    expect(out).toMatchObject({
+      ok: true,
+      backgroundUrls: ['https://o/b.mp3', 'https://o/d.mp3', 'https://o/o.mp3'],
+    });
   });
 
   it('REPLICATE_DEMUCS_INPUT переопределяет схему входа и подставляет ссылку', async () => {
