@@ -223,6 +223,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
         block={revoiceBlock({
           voiceMode: video.voiceMode,
           hasBrandSnapshot: !!snapshot,
+          hasSynthesizedVoice: video.voiceStatus === 'synthesized',
           hasGreetingSnapshot: !!session?.greetingBriefSnapshot,
         })}
         // Поздравление: брендбука нет, голос — в снимке брифа и меняется

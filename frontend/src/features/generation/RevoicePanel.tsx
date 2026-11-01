@@ -237,7 +237,7 @@ export function RevoicePanel({
       // resemble, иначе активный на стенде). Поздравление: снимка бренда
       // нет — патча тоже (он и давал 404).
       const patch = revoiceSnapshotPatch({
-        isGreeting: !!greetingVoice,
+        isGreeting: !!greetingVoice || !snapshot,
         snapshot,
         ttsVoiceId,
         providerOverride,
@@ -311,6 +311,23 @@ export function RevoicePanel({
       </p>
     </>
   );
+
+  // Standalone videos reuse the configured system voice. Do not offer a
+  // voice picker whose snapshot-saving request would fail with a 404.
+  if (!snapshot && !greetingVoice) {
+    return (
+      <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
+        <CardHeader
+          icon={<Mic2 size={18} className="text-accent" />}
+          title={dict.revoicePanel.panelTitle}
+          hint={dict.revoicePanel.panelHint}
+        />
+        {errorAlerts}
+        {scriptField}
+        {submitButton}
+      </Card>
+    );
+  }
 
   // Поздравление: голос только называем и ведём в мастер, где он
   // выбирается; предпрослушки тоже нет — она прослушивает голос,

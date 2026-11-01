@@ -37,6 +37,7 @@ export interface PostprodVideoSummaryRow {
   renderedUrl: string | null;
   postStatus: string | null;
   voiceMode: string | null;
+  voiceStatus?: string | null;
   aspectRatio: string | null;
   quality: string | null;
   provider: string | null;
@@ -56,6 +57,7 @@ const SELECT_FROM = `
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'renderedUrl' AS "renderedUrl",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'postStatus' AS "postStatus",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'voiceMode' AS "voiceMode",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'voiceStatus' AS "voiceStatus",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'aspectRatio' AS "aspectRatio",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' AS "quality",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'provider' AS "provider",

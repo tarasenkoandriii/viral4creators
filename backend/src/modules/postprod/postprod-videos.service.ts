@@ -104,7 +104,7 @@ export class PostprodVideosService {
   private revoiceFields(
     row: Pick<
       PostprodVideoSummaryRow,
-      'voiceMode' | 'hasBrandSnapshot' | 'hasGreetingSnapshot'
+      'voiceMode' | 'voiceStatus' | 'hasBrandSnapshot' | 'hasGreetingSnapshot'
     >,
   ): Pick<PostprodVideoSummary, 'canRevoice' | 'revoiceBlock'> {
     const block = revoiceBlock({
@@ -113,6 +113,7 @@ export class PostprodVideosService {
       // или мока без поля не должна читаться как «снимок есть».
       hasBrandSnapshot: row.hasBrandSnapshot === true,
       hasGreetingSnapshot: row.hasGreetingSnapshot === true,
+      hasSynthesizedVoice: row.voiceStatus === 'synthesized',
     });
     return { canRevoice: block === null, revoiceBlock: block };
   }

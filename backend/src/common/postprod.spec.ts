@@ -1,6 +1,15 @@
 import { DEFAULT_DUCK, planPostProduction, PostProdError } from './postprod';
 
 describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () => {
+  it('pads standalone narration to the video duration without re-encoding its frames', () => {
+    const plan = planPostProduction({
+      voiceMode: 'dub',
+      voiceInputKey: 'voice',
+      totalDurationSeconds: 8,
+    });
+    expect(plan.command).toContain('apad=whole_dur=8');
+    expect(plan.command).toContain('-c:v copy');
+  });
   it('когда делать нечего, задача не создаётся', () => {
     // Пустая задача это оплаченное перекодирование ради того же файла.
     expect(() => planPostProduction({})).toThrow(PostProdError);

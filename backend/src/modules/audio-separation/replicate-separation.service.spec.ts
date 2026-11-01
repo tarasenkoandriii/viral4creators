@@ -213,6 +213,37 @@ describe('ReplicateSeparationService — вызов', () => {
     expect(out.reason).toContain('REPLICATE_DEMUCS_VERSION');
   });
 
+  it('requests all background stems using the published Demucs input schema', async () => {
+    const svc = configured();
+    const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
+      jsonResponse({
+        status: 'succeeded',
+        output: {
+          vocals: 'https://o/v.mp3',
+          bass: 'https://o/b.mp3',
+          drums: 'https://o/d.mp3',
+          other: 'https://o/o.mp3',
+        },
+      }) as never,
+    );
+    const out = await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0][1] as RequestInit).body),
+    );
+    expect(body.input).toEqual({
+      audio: 'https://x/a.mp4',
+      isolate_stem: 'none',
+      format: 'mp3',
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok)
+      expect(out.backgroundUrls).toEqual([
+        'https://o/b.mp3',
+        'https://o/d.mp3',
+        'https://o/o.mp3',
+      ]);
+  });
+
   it('REPLICATE_DEMUCS_INPUT переопределяет схему входа и подставляет ссылку', async () => {
     // Смысл переменной: если имена полей у модели окажутся другими, это
     // правка настройки, а не деплой.

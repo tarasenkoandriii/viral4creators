@@ -20,10 +20,15 @@ export function revoiceBlock(facts: {
   hasBrandSnapshot: boolean;
   /** Поздравление держит голос в снимке брифа, брендбука у него нет. */
   hasGreetingSnapshot: boolean;
+  hasSynthesizedVoice?: boolean;
 }): RevoiceBlock | null {
   // Veo первым: снимок человеку не поможет, дорожки всё равно нет.
   if (!usesOwnVoice(facts.voiceMode ?? undefined)) return 'veo-voice';
-  if (!facts.hasBrandSnapshot && !facts.hasGreetingSnapshot) {
+  if (
+    !facts.hasBrandSnapshot &&
+    !facts.hasGreetingSnapshot &&
+    !facts.hasSynthesizedVoice
+  ) {
     return 'no-voice-settings';
   }
   return null;

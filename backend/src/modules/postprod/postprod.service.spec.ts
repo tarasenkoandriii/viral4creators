@@ -2420,6 +2420,20 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(api.submit).toHaveBeenCalledTimes(1);
     });
 
+    it('revoices a standalone synthesized dub without re-rendering video or inventing a brand', async () => {
+      const { svc, api } = build({
+        session: session({ brandManifestSnapshot: undefined }),
+      });
+      const r = await svc.reVoice('s1', {
+        ...DONE_VIDEO,
+        provider: 'grok',
+        voiceMode: 'dub',
+        voiceStatus: 'synthesized',
+      });
+      expect(r.postStatus).toBe('pending');
+      expect(api.submit).toHaveBeenCalledTimes(1);
+    });
+
     it('ролик ещё не готов — переозвучка отказывает сразу, не занимая замок', async () => {
       const { svc, sessions } = build({ session: voiced });
       await expect(

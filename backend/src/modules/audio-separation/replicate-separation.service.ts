@@ -242,8 +242,10 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
     }
     return {
       audio: sourceUrl,
-      stem: 'vocals',
-      output_format: 'mp3',
+      // ryan5453/demucs uses isolate_stem/format. Request every stem:
+      // the music bed must never depend on a vocals-only response.
+      isolate_stem: 'none',
+      format: 'mp3',
     };
   }
 

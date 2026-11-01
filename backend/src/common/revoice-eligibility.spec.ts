@@ -41,6 +41,25 @@ describe('revoiceBlock', () => {
     ).toBeNull();
   });
 
+  it('standalone dub can reuse an already synthesized system voice', () => {
+    expect(
+      revoiceBlock({
+        voiceMode: 'dub',
+        hasBrandSnapshot: false,
+        hasGreetingSnapshot: false,
+        hasSynthesizedVoice: true,
+      }),
+    ).toBeNull();
+    expect(
+      revoiceBlock({
+        voiceMode: 'veo',
+        hasBrandSnapshot: false,
+        hasGreetingSnapshot: false,
+        hasSynthesizedVoice: true,
+      }),
+    ).toBe('veo-voice');
+  });
+
   it('Veo без снимков — причина Veo, а не снимок (её человеку не исправить)', () => {
     expect(
       revoiceBlock({

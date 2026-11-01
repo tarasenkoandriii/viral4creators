@@ -762,6 +762,7 @@ export class PostProductionService {
         voiceMode: work.voiceMode,
         hasBrandSnapshot: !!fresh?.brandManifestSnapshot,
         hasGreetingSnapshot: !!fresh?.greetingBriefSnapshot,
+        hasSynthesizedVoice: freshVideo.voiceStatus === 'synthesized',
       });
       if (block) throw new PostProdError(REVOICE_BLOCK_MESSAGE[block]);
 

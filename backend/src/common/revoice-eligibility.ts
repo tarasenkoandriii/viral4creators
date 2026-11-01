@@ -38,6 +38,8 @@ export interface RevoiceFacts {
   /** Поздравление держит голос в своём снимке брифа (`senderVoice` и
    * соседи), брендбука у него нет по замыслу — его переозвучка законна. */
   hasGreetingSnapshot: boolean;
+  /** Standalone renders already voiced by the configured system provider. */
+  hasSynthesizedVoice?: boolean;
 }
 
 export function revoiceBlock(facts: RevoiceFacts): RevoiceBlock | null {
@@ -46,7 +48,11 @@ export function revoiceBlock(facts: RevoiceFacts): RevoiceBlock | null {
   if (!isVoiceMode(facts.voiceMode) || !usesOwnVoice(facts.voiceMode)) {
     return 'veo-voice';
   }
-  if (!facts.hasBrandSnapshot && !facts.hasGreetingSnapshot) {
+  if (
+    !facts.hasBrandSnapshot &&
+    !facts.hasGreetingSnapshot &&
+    !facts.hasSynthesizedVoice
+  ) {
     return 'no-voice-settings';
   }
   return null;

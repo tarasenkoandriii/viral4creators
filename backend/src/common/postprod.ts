@@ -657,6 +657,7 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
         voice: voiceKey ? { index: voiceIndex, delayMs } : null,
         music: musicKey ? { index: musicIndex, volume: musicVolume } : null,
         totalSeconds,
+        padToSeconds: totalSeconds,
       }),
     );
   }

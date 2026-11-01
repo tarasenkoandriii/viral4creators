@@ -55,3 +55,12 @@ it('Veo без снимков — причина Veo', () => {
 });
 
 console.log(`  ${passed} passed`);
+
+assert.equal(
+  revoiceBlock({ voiceMode: 'dub', ...bare, hasSynthesizedVoice: true }),
+  null
+);
+assert.equal(
+  revoiceBlock({ voiceMode: 'veo', ...bare, hasSynthesizedVoice: true }),
+  'veo-voice'
+);
