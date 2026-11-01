@@ -1961,16 +1961,16 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       // Чужая ссылка живёт ограниченное время — отдавать её пользователю
       // значит через сутки получить битую.
       expect(blob.uploadBuffer.mock.calls[0][0]).toBe(
-        'sessions/s1/generated-4x5.mp4',
+        'sessions/s1/generated-4x5-cc5ebc646150.mp4',
       );
       expect(r.postStatus).toBe('complete');
       expect(r.reframePending).toBe(false);
       expect(r.downloadUrl).toBe(
-        'https://blob.test/sessions/s1/generated-4x5.mp4',
+        'https://blob.test/sessions/s1/generated-4x5-cc5ebc646150.mp4',
       );
       // Исходник остаётся — как страховка и для сравнения «до и после».
       expect(r.renderedUrl).toBe(VIDEO.downloadUrl);
-      expect(r.postPathname).toBe('sessions/s1/generated-4x5.mp4');
+      expect(r.postPathname).toBe('sessions/s1/generated-4x5-cc5ebc646150.mp4');
     });
 
     it('озвучка без обрезки кладётся по своему пути', async () => {
@@ -1986,7 +1986,7 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       });
       await svc.poll('s1', { ...pending, reframePending: false });
       expect(blob.uploadBuffer.mock.calls[0][0]).toBe(
-        'sessions/s1/generated-voiced.mp4',
+        'sessions/s1/generated-voiced-cc5ebc646150.mp4',
       );
     });
 
@@ -2353,7 +2353,8 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       // (`poll()` переносит его сюда), `downloadUrl` — уже ГОТОВЫЙ файл
       // со старым голосом.
       renderedUrl: 'https://blob.test/sessions/s1/generated.mp4',
-      downloadUrl: 'https://blob.test/sessions/s1/generated-4x5.mp4',
+      downloadUrl:
+        'https://blob.test/sessions/s1/generated-4x5-cc5ebc646150.mp4',
       reframePending: false, // одноразовый флаг уже снят первым проходом
     };
     const voiced = session({

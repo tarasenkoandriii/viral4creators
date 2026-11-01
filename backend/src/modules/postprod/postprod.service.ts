@@ -1413,9 +1413,7 @@ export class PostProductionService {
       isGreeting: !!session?.greetingBriefSnapshot,
       recoverBackground:
         video.backgroundStatus === 'failed' &&
-        !!video.backgroundError &&
-        (video.backgroundError.includes('(timeout)') ||
-          video.backgroundError.includes('новая не запускалась')),
+        !!video.backgroundError?.includes('(timeout)'),
       preparedGreetingVoice: video.preparedGreetingVoice,
       crop,
       voiceMode,
@@ -1941,7 +1939,12 @@ export class PostProductionService {
       video.reframePending && video.aspectRatio
         ? video.aspectRatio.replace(/[^0-9]+/g, 'x')
         : 'voiced';
-    return `sessions/${sessionId}/generated-${suffix}.mp4`;
+    // Each completed job gets its own URL: browsers must not replay an older
+    // MP4 cached under the previous revoice's pathname.
+    const revision = video.postJobId
+      ? `-${createHash('sha256').update(video.postJobId).digest('hex').slice(0, 12)}`
+      : '';
+    return `sessions/${sessionId}/generated-${suffix}${revision}.mp4`;
   }
 
   private async download(url: string): Promise<Buffer> {
