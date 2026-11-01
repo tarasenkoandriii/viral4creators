@@ -134,6 +134,9 @@ interface Prediction {
   output?: unknown;
   error?: unknown;
   urls?: { get?: string };
+  input?: Record<string, unknown>;
+  created_at?: string;
+  model?: string;
 }
 
 /** Хеш последней версии по «база|модель». Модель меняется раз в год. */
@@ -276,12 +279,27 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       this.logger.log(
         `разделяю дорожку${request.sessionId ? ` (сессия ${request.sessionId})` : ''}`,
       );
-      let prediction = await this.create(token, sourceUrl);
+      let prediction: Prediction;
+      if (request.recoverExisting) {
+        const existing = await this.findExisting(token, sourceUrl);
+        if (!existing) {
+          return {
+            ok: false,
+            reused: true,
+            reason:
+              'оплаченная задача для этого исходника не найдена; новая не запускалась',
+          };
+        }
+        prediction = existing;
+      } else {
+        prediction = await this.create(token, sourceUrl);
+      }
       prediction = await this.settle(token, prediction, started);
 
       if (prediction.status !== TERMINAL_OK) {
         return {
           ok: false,
+          ...(request.recoverExisting ? { reused: true } : {}),
           reason: `разделение не удалось (${prediction.status ?? 'без статуса'}): ${
             typeof prediction.error === 'string'
               ? prediction.error.slice(0, 200)
@@ -294,12 +312,14 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       if (backgroundUrls.length === 0) {
         return {
           ok: false,
+          ...(request.recoverExisting ? { reused: true } : {}),
           reason:
             'разделение прошло, но фоновых стемов в ответе нет — проверьте REPLICATE_DEMUCS_INPUT и схему модели',
         };
       }
       return {
         ok: true,
+        ...(request.recoverExisting ? { reused: true } : {}),
         backgroundUrls,
         vocalsUrl,
         seconds: (Date.now() - started) / 1000,
@@ -307,9 +327,39 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
     } catch (e) {
       return {
         ok: false,
+        ...(request.recoverExisting ? { reused: true } : {}),
         reason: `разделение сорвалось: ${e instanceof Error ? e.message : String(e)}`,
       };
     }
+  }
+
+  private async findExisting(
+    token: string,
+    sourceUrl: string,
+  ): Promise<Prediction | undefined> {
+    const res = await fetch(`${this.base()}/predictions`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`replicate recovery ${res.status}`);
+    const data = JSON.parse(await res.text()) as { results?: Prediction[] };
+    const recent = (data.results ?? []).filter(
+      (p) =>
+        p.model === this.model() &&
+        p.input &&
+        Object.values(p.input).some((value) => value === sourceUrl) &&
+        p.created_at &&
+        Date.now() - Date.parse(p.created_at) < 86_400_000 &&
+        !TERMINAL_BAD.has(p.status ?? ''),
+    );
+    // Prefer a completed result with usable background over an older vocals-only result.
+    return (
+      recent.find(
+        (p) =>
+          p.status === TERMINAL_OK &&
+          splitStems(p.output).backgroundUrls.length > 0,
+      ) ?? recent.find((p) => p.status !== TERMINAL_OK)
+    );
   }
 
   private async create(token: string, sourceUrl: string): Promise<Prediction> {

@@ -1105,6 +1105,30 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
         expect(r.backgroundError).toBeUndefined();
       });
 
+      it('recovers a timed-out paid prediction without recording a second separation charge', async () => {
+        const { svc, separation, aiUsage } = build({ session: dubbed() });
+        separation.configured.mockReturnValue(true);
+        separation.separate.mockResolvedValue({
+          ok: true,
+          reused: true,
+          backgroundUrls: ['https://blob/no_vocals.mp3'],
+        });
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          backgroundStatus: 'failed',
+          backgroundError: 'разделение не удалось (timeout)',
+        });
+        expect(separation.separate).toHaveBeenCalledWith({
+          sessionId: 's1',
+          sourceUrl: VIDEO.downloadUrl,
+          recoverExisting: true,
+        });
+        expect(r.backgroundStatus).toBe('kept');
+        expect(aiUsage.record).not.toHaveBeenCalledWith(
+          expect.objectContaining({ operation: 'audio-separation' }),
+        );
+      });
+
       describe('копия стемов для языковых дорожек (01.10.2026)', () => {
         const realFetch = global.fetch;
         afterEach(() => {

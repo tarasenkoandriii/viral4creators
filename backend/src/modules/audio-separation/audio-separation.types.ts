@@ -17,6 +17,8 @@ export interface SeparationRequest {
   sourceUrl: string;
   /** Для учёта расхода — чей вызов. */
   sessionId?: string;
+  /** Recover a paid prediction for this exact source; never start another. */
+  recoverExisting?: boolean;
 }
 
 export interface SeparationOutcome {
@@ -28,6 +30,8 @@ export interface SeparationOutcome {
    * для тревог.
    */
   skipped?: boolean;
+  /** No new provider prediction was purchased. */
+  reused?: boolean;
   reason?: string;
   /**
    * Всё, кроме голоса. Обычно одна ссылка (двухстемный режим), но может

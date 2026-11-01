@@ -241,6 +241,60 @@ describe('ReplicateSeparationService — вызов', () => {
     });
   });
 
+  it('recovers only the exact paid source and model without buying another prediction', async () => {
+    const svc = configured();
+    const prediction = {
+      model: 'ryan5453/demucs',
+      created_at: new Date().toISOString(),
+      status: 'succeeded',
+      input: { audio: 'https://x/a.mp4' },
+      output: { no_vocals: 'https://o/bg.mp3' },
+    };
+    const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
+      jsonResponse({
+        results: [
+          {
+            ...prediction,
+            model: 'other/model',
+            output: { no_vocals: 'https://o/wrong-model.mp3' },
+          },
+          {
+            ...prediction,
+            input: { audio: 'https://x/another-client.mp4' },
+            output: { no_vocals: 'https://o/foreign.mp3' },
+          },
+          prediction,
+        ],
+      }) as never,
+    );
+    expect(
+      await svc.separate({
+        sourceUrl: 'https://x/a.mp4',
+        recoverExisting: true,
+      }),
+    ).toMatchObject({
+      ok: true,
+      reused: true,
+      backgroundUrls: ['https://o/bg.mp3'],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBeUndefined();
+  });
+
+  it('does not pay again when recovery cannot find an exact matching source', async () => {
+    const svc = configured();
+    const fetchMock = jest
+      .spyOn(global, 'fetch' as never)
+      .mockResolvedValue(jsonResponse({ results: [] }) as never);
+    expect(
+      await svc.separate({
+        sourceUrl: 'https://x/a.mp4',
+        recoverExisting: true,
+      }),
+    ).toMatchObject({ ok: false, reused: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('REPLICATE_DEMUCS_INPUT переопределяет схему входа и подставляет ссылку', async () => {
     // Смысл переменной: если имена полей у модели окажутся другими, это
     // правка настройки, а не деплой.

@@ -131,6 +131,7 @@ interface BackgroundOutcome {
 }
 
 interface Work {
+  recoverBackground?: boolean;
   preparedGreetingVoice?: GeneratedVideo['preparedGreetingVoice'];
   isGreeting: boolean;
   /** Нужна ли обрезка кадра. */
@@ -1410,6 +1411,9 @@ export class PostProductionService {
 
     return {
       isGreeting: !!session?.greetingBriefSnapshot,
+      recoverBackground:
+        video.backgroundStatus === 'failed' &&
+        !!video.backgroundError?.includes('(timeout)'),
       preparedGreetingVoice: video.preparedGreetingVoice,
       crop,
       voiceMode,
@@ -1726,11 +1730,15 @@ export class PostProductionService {
     // прогона — цена, которую не жалко.
     if (!(await this.separationSettings.enabled())) return without('off');
 
-    const outcome = await this.separation.separate({ sourceUrl, sessionId });
+    const outcome = await this.separation.separate({
+      sourceUrl,
+      sessionId,
+      ...(work.recoverBackground ? { recoverExisting: true } : {}),
+    });
     // Платим за прогон, а не за результат: провайдер считает даже
     // неудачные попытки, и прятать их из отчёта расходов значило бы
     // получить счёт, которому нечего противопоставить.
-    if (!outcome.skipped) {
+    if (!outcome.skipped && !outcome.reused) {
       await this.aiUsage.record({
         operation: 'audio-separation',
         model: 'htdemucs',
