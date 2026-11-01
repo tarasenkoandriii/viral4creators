@@ -281,6 +281,42 @@ describe('ReplicateSeparationService — вызов', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBeUndefined();
   });
 
+  it('recovers by persisted id even when the provider rewrites input URLs', async () => {
+    const svc = configured();
+    const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
+      jsonResponse({
+        id: 'paid1',
+        model: 'ryan5453/demucs',
+        status: 'succeeded',
+        input: { audio: 'https://replicate.delivery/rewritten.mp4' },
+        output: { no_vocals: 'https://o/bg.mp3' },
+      }) as never,
+    );
+    expect(
+      await svc.separate({
+        sourceUrl: 'https://x/a.mp4',
+        recoverExisting: true,
+        existingPredictionId: 'paid1',
+      }),
+    ).toMatchObject({ ok: true, reused: true, predictionId: 'paid1' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain('/predictions/paid1');
+    fetchMock.mockResolvedValue(
+      jsonResponse({ model: 'other/model', status: 'succeeded' }) as never,
+    );
+    expect(
+      await svc.separate({
+        sourceUrl: 'https://x/a.mp4',
+        recoverExisting: true,
+        existingPredictionId: 'paid1',
+      }),
+    ).toMatchObject({
+      ok: false,
+      reused: true,
+      reason: expect.stringContaining('model mismatch'),
+    });
+  });
+
   it('does not pay again when recovery cannot find an exact matching source', async () => {
     const svc = configured();
     const fetchMock = jest
@@ -399,6 +435,7 @@ describe('ReplicateSeparationService — бюджет времени', () => {
     const svc = new ReplicateSeparationService();
     jest.spyOn(global, 'fetch' as never).mockResolvedValue(
       jsonResponse({
+        id: 'paid-timeout',
         status: 'processing',
         urls: { get: 'https://api/p/1' },
       }) as never,
@@ -408,6 +445,7 @@ describe('ReplicateSeparationService — бюджет времени', () => {
 
     expect(out.ok).toBe(false);
     expect(out.reason).toContain('timeout');
+    expect(out.predictionId).toBe('paid-timeout');
   }, 30_000);
 });
 

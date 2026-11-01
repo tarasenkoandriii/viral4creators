@@ -272,6 +272,7 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
     }
 
     const started = Date.now();
+    let predictionId: string | undefined;
     try {
       // `sessionId` до сквозного аудита принимался и никуда не шёл.
       // Прогон платный и небыстрый; когда в логе десяток таких строк
@@ -281,7 +282,9 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       );
       let prediction: Prediction;
       if (request.recoverExisting) {
-        const existing = await this.findExisting(token, sourceUrl);
+        const existing = request.existingPredictionId
+          ? await this.getExisting(token, request.existingPredictionId)
+          : await this.findExisting(token, sourceUrl);
         if (!existing) {
           return {
             ok: false,
@@ -294,12 +297,14 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       } else {
         prediction = await this.create(token, sourceUrl);
       }
+      predictionId = prediction.id;
       prediction = await this.settle(token, prediction, started);
 
       if (prediction.status !== TERMINAL_OK) {
         return {
           ok: false,
           ...(request.recoverExisting ? { reused: true } : {}),
+          ...(predictionId ? { predictionId } : {}),
           reason: `разделение не удалось (${prediction.status ?? 'без статуса'}): ${
             typeof prediction.error === 'string'
               ? prediction.error.slice(0, 200)
@@ -313,6 +318,7 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
         return {
           ok: false,
           ...(request.recoverExisting ? { reused: true } : {}),
+          ...(predictionId ? { predictionId } : {}),
           reason:
             'разделение прошло, но фоновых стемов в ответе нет — проверьте REPLICATE_DEMUCS_INPUT и схему модели',
         };
@@ -320,6 +326,7 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       return {
         ok: true,
         ...(request.recoverExisting ? { reused: true } : {}),
+        ...(predictionId ? { predictionId } : {}),
         backgroundUrls,
         vocalsUrl,
         seconds: (Date.now() - started) / 1000,
@@ -328,9 +335,27 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       return {
         ok: false,
         ...(request.recoverExisting ? { reused: true } : {}),
+        ...(predictionId ? { predictionId } : {}),
         reason: `разделение сорвалось: ${e instanceof Error ? e.message : String(e)}`,
       };
     }
+  }
+
+  private async getExisting(token: string, id: string): Promise<Prediction> {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id))
+      throw new Error('invalid prediction id');
+    const res = await fetch(
+      `${this.base()}/predictions/${encodeURIComponent(id)}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) throw new Error(`replicate recovery ${res.status}`);
+    const prediction = parseJson(await res.text());
+    if (prediction.model !== this.model())
+      throw new Error('prediction model mismatch');
+    return prediction;
   }
 
   private async findExisting(

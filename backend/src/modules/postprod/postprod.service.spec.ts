@@ -1117,11 +1117,13 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
           ...VIDEO,
           backgroundStatus: 'failed',
           backgroundError: 'разделение не удалось (timeout)',
+          backgroundPredictionId: 'paid1',
         });
         expect(separation.separate).toHaveBeenCalledWith({
           sessionId: 's1',
           sourceUrl: VIDEO.downloadUrl,
           recoverExisting: true,
+          existingPredictionId: 'paid1',
         });
         expect(r.backgroundStatus).toBe('kept');
         expect(aiUsage.record).not.toHaveBeenCalledWith(

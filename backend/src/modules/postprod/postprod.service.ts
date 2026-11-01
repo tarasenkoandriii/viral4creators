@@ -126,12 +126,16 @@ interface BackgroundOutcome {
   note: string;
   patch?: Pick<
     GeneratedVideo,
-    'backgroundStatus' | 'backgroundError' | 'backgroundStemUrls'
+    | 'backgroundStatus'
+    | 'backgroundError'
+    | 'backgroundStemUrls'
+    | 'backgroundPredictionId'
   >;
 }
 
 interface Work {
   recoverBackground?: boolean;
+  backgroundPredictionId?: string;
   preparedGreetingVoice?: GeneratedVideo['preparedGreetingVoice'];
   isGreeting: boolean;
   /** Нужна ли обрезка кадра. */
@@ -1412,8 +1416,10 @@ export class PostProductionService {
     return {
       isGreeting: !!session?.greetingBriefSnapshot,
       recoverBackground:
-        video.backgroundStatus === 'failed' &&
-        !!video.backgroundError?.includes('(timeout)'),
+        !!video.backgroundPredictionId ||
+        (video.backgroundStatus === 'failed' &&
+          !!video.backgroundError?.includes('(timeout)')),
+      backgroundPredictionId: video.backgroundPredictionId,
       preparedGreetingVoice: video.preparedGreetingVoice,
       crop,
       voiceMode,
@@ -1713,6 +1719,7 @@ export class PostProductionService {
     const without = (
       status: Exclude<GeneratedVideo['backgroundStatus'], 'kept' | undefined>,
       error?: string,
+      predictionId?: string,
     ): BackgroundOutcome => ({
       keys: [],
       inputs: {},
@@ -1721,6 +1728,7 @@ export class PostProductionService {
       // ролик (переозвучка могла сменить исходник) — снимаем ссылки.
       patch: {
         backgroundStatus: status,
+        backgroundPredictionId: predictionId,
         backgroundError: error,
         backgroundStemUrls: undefined,
       },
@@ -1737,6 +1745,9 @@ export class PostProductionService {
       sourceUrl,
       sessionId,
       ...(work.recoverBackground ? { recoverExisting: true } : {}),
+      ...(work.backgroundPredictionId
+        ? { existingPredictionId: work.backgroundPredictionId }
+        : {}),
     });
     // Платим за прогон, а не за результат: провайдер считает даже
     // неудачные попытки, и прятать их из отчёта расходов значило бы
@@ -1757,7 +1768,7 @@ export class PostProductionService {
       this.logger.warn(
         `фон ролика сохранить не удалось, собираю дубляж по-старому: ${outcome.reason}`,
       );
-      return without('failed', outcome.reason);
+      return without('failed', outcome.reason, outcome.predictionId);
     }
 
     const inputs: Record<string, string> = {};
@@ -1780,6 +1791,7 @@ export class PostProductionService {
       note: `фон сохранён (${keys.length} стем(ов), ${outcome.seconds?.toFixed(1)} с)`,
       patch: {
         backgroundStatus: 'kept',
+        backgroundPredictionId: outcome.predictionId,
         backgroundError: undefined,
         backgroundStemUrls: stemCopies,
       },

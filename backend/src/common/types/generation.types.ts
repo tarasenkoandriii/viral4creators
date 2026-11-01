@@ -259,6 +259,7 @@ export interface GeneratedVideo {
    * «неизвестно».
    */
   backgroundStatus?: 'kept' | 'off' | 'unavailable' | 'failed';
+  backgroundPredictionId?: string;
   backgroundError?: string;
   /**
    * Фон ролика без голоса модели — НАШИ копии стемов в Blob

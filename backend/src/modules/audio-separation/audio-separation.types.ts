@@ -19,6 +19,8 @@ export interface SeparationRequest {
   sessionId?: string;
   /** Recover a paid prediction for this exact source; never start another. */
   recoverExisting?: boolean;
+  /** Server-persisted prediction id for recovery after a caller timeout. */
+  existingPredictionId?: string;
 }
 
 export interface SeparationOutcome {
@@ -32,6 +34,7 @@ export interface SeparationOutcome {
   skipped?: boolean;
   /** No new provider prediction was purchased. */
   reused?: boolean;
+  predictionId?: string;
   reason?: string;
   /**
    * Всё, кроме голоса. Обычно одна ссылка (двухстемный режим), но может
