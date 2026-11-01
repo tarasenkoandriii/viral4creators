@@ -474,7 +474,12 @@ export function splitStems(output: unknown): {
   let vocalsUrl: string | undefined;
 
   const isUrl = (v: unknown): v is string =>
-    typeof v === 'string' && /^https?:\/\//.test(v);
+    typeof v === 'string' &&
+    (/^https?:\/\//.test(v) ||
+      (v.length <= 44 * 1024 * 1024 &&
+        /^data:audio\/(?:mpeg|mp3|wav|x-wav|flac|ogg|mp4|aac);base64,[A-Za-z0-9+/]*={0,2}$/.test(
+          v,
+        )));
 
   if (isUrl(output)) {
     // Одна ссылка без имени — считать её фоном нельзя: с тем же

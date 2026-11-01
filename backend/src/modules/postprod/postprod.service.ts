@@ -1771,20 +1771,30 @@ export class PostProductionService {
       return without('failed', outcome.reason, outcome.predictionId);
     }
 
-    const inputs: Record<string, string> = {};
-    const keys = outcome.backgroundUrls.map((url, i) => {
-      const key = `bg${i + 1}`;
-      inputs[key] = url;
-      return key;
-    });
-    // Свои копии — для языковых дорожек, которые соберутся позже
-    // (ссылки провайдера временные). Сама эта сборка берёт стемы прямо
-    // у провайдера: копия ей не нужна, а лишнее чтение из Blob — это
-    // платный исходящий трафик.
+    // Cog may inline audio as data URIs. FFmpeg accepts fetchable URLs only;
+    // persist every inline stem before submitting the job, and fail closed if
+    // any copy fails rather than dropping part of the music bed.
     const stemCopies = await this.keepStemCopies(
       sessionId,
       outcome.backgroundUrls,
     );
+    const hasInlineAudio = outcome.backgroundUrls.some((url) =>
+      url.startsWith('data:'),
+    );
+    if (hasInlineAudio && !stemCopies) {
+      return without(
+        'failed',
+        'не удалось сохранить встроенные аудиодорожки провайдера',
+        outcome.predictionId,
+      );
+    }
+    const renderUrls = hasInlineAudio ? stemCopies! : outcome.backgroundUrls;
+    const inputs: Record<string, string> = {};
+    const keys = renderUrls.map((url, i) => {
+      const key = `bg${i + 1}`;
+      inputs[key] = url;
+      return key;
+    });
     return {
       keys,
       inputs,
@@ -1821,12 +1831,16 @@ export class PostProductionService {
             throw new Error(`стем ${i + 1}: размер ${buffer.length} байт`);
           }
           const ext =
-            /\.(mp3|wav|flac|m4a|ogg)(?:\?|$)/i.exec(url)?.[1] ?? 'mp3';
+            /\.(mp3|wav|flac|m4a|ogg)(?:\?|$)/i.exec(url)?.[1] ??
+            (/^data:audio\/(?:x-)?wav;/i.test(url) ? 'wav' : 'mp3');
+          const revision = url.startsWith('data:')
+            ? `-${createHash('sha256').update(buffer).digest('hex').slice(0, 12)}`
+            : '';
           const type =
             res.headers.get('content-type')?.split(';')[0]?.trim() ||
             'audio/mpeg';
           const { url: kept } = await this.blob.uploadBuffer(
-            `sessions/${sessionId}/background-${i + 1}.${ext.toLowerCase()}`,
+            `sessions/${sessionId}/background-${i + 1}${revision}.${ext.toLowerCase()}`,
             buffer,
             type,
           );

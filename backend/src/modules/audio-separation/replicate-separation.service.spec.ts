@@ -488,6 +488,17 @@ describe('splitStems — разбор ответа модели', () => {
     expect(splitStems('https://o/x.mp3').backgroundUrls).toEqual([]);
   });
 
+  it('accepts bounded inline audio but rejects non-audio data', () => {
+    const audio = 'data:audio/mpeg;base64,SUQz';
+    expect(
+      splitStems({
+        bass: audio,
+        vocals: audio,
+        report: 'data:text/html;base64,PHNjcmlwdD4=',
+      }),
+    ).toEqual({ backgroundUrls: [audio], vocalsUrl: audio });
+  });
+
   it('мусор вместо ответа — пустой результат, без исключения', () => {
     expect(splitStems(null).backgroundUrls).toEqual([]);
     expect(splitStems(42).backgroundUrls).toEqual([]);

@@ -1168,6 +1168,41 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
           );
         });
 
+        it('persists inline audio before rendering and refuses a partial inline background', async () => {
+          global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            headers: { get: () => 'audio/mpeg' },
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+          }) as unknown as typeof fetch;
+          const { svc, separation, api } = build({ session: dubbed() });
+          separation.configured.mockReturnValue(true);
+          separation.separate.mockResolvedValue({
+            ok: true,
+            predictionId: 'paid1',
+            backgroundUrls: ['data:audio/mpeg;base64,AQID'],
+          });
+          const result = await svc.start('s1', VIDEO);
+          expect(result.backgroundStatus).toBe('kept');
+          expect(result.backgroundPredictionId).toBe('paid1');
+          expect(api.submit.mock.calls[0][0].inputs.bg1).toMatch(
+            /^https:\/\/blob.test\/sessions\/s1\/background-1-[a-f0-9]{12}\.mp3$/,
+          );
+          (global.fetch as jest.Mock).mockRejectedValue(
+            new Error('storage failed'),
+          );
+          const second = build({ session: dubbed() });
+          second.separation.configured.mockReturnValue(true);
+          second.separation.separate.mockResolvedValue({
+            ok: true,
+            predictionId: 'paid1',
+            backgroundUrls: ['data:audio/mpeg;base64,AQID'],
+          });
+          const failed = await second.svc.start('s1', VIDEO);
+          expect(failed.backgroundStatus).toBe('failed');
+          expect(failed.backgroundPredictionId).toBe('paid1');
+          expect(second.api.submit.mock.calls[0][0].inputs.bg1).toBeUndefined();
+        });
+
         it('копия не удалась — ролик собирается, фон kept, ссылок нет', async () => {
           global.fetch = jest.fn().mockResolvedValue({
             ok: false,
