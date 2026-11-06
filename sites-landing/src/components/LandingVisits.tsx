@@ -9,7 +9,8 @@ export function landingFor(host: string, path: string, landingsByHost: Record<st
   const landing = landingsByHost[host];
   if (!landing) return null;
   const page = path.split('/').filter(Boolean)[1];
-  if (landing === 'story-tales') return path.split('/').filter(Boolean).length <= 2 && (!page || page === 'stories') ? 'story-tales' : null;
+  if (landing === 'story-tales')
+    return path.split('/').filter(Boolean).length <= 2 && (!page || page === 'stories') ? 'story-tales' : null;
   if (page === 'stories') return null;
   if (landing === 'assistant' && page === 'hands-free') return 'hands-free';
   if (landing === 'assistant' && page === 'qa') return 'qa';
