@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from 'react';
 import { getLandingVisits, setLandingIpUniqueness, type LandingVisitsReport } from '../../lib/endpoints';
-const names: Record<string,string> = { main: 'Основной', greeting: 'Поздравления', tutorial: 'Tutorial', assistant: 'AI‑помощник', publisher: 'AI Publisher' };
+const names: Record<string,string> = { main: 'Основной', greeting: 'Поздравления', tutorial: 'Tutorial', assistant: 'AI‑помощник', publisher: 'AI Publisher', 'hands-free': 'Hands-free', qa: 'QA', 'story-tales': 'Story-Tales' };
 const languages: Record<string,string> = { ru:'Русский', uk:'Українська', en:'English', de:'Deutsch', es:'Español' };
 export default function LandingVisitsPage() {
  const [days,setDays] = useState(7), [data,setData] = useState<LandingVisitsReport|null>(null),

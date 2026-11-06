@@ -8,14 +8,22 @@ assert.equal(landingFor('welcome.viral4creators.app','/en/greetings',landingVisi
 assert.equal(landingFor('welcome.viral4creators.app','/de',landingVisitsConfig.landingsByHost),'main');
 assert.equal(landingFor('ai-publisher.org','/',{'ai-publisher.org':'publisher'}),'publisher');
 assert.equal(landingFor('assist.viral4creators.app','/en/pricing',{'assist.viral4creators.app':'assistant'}),'assistant');
-assert.equal(landingFor('story-tales.viral4creators.app','/ru',landingVisitsConfig.landingsByHost),null);
+for (const locale of ['ru','uk','en','de','es']) {
+ for (const suffix of ['', '/']) {
+  assert.equal(landingFor('story-tales.viral4creators.app',`/${locale}${suffix}`,landingVisitsConfig.landingsByHost),'story-tales');
+  assert.equal(landingFor('assist.viral4creators.app',`/${locale}/hands-free${suffix}`,{'assist.viral4creators.app':'assistant'}),'hands-free');
+  assert.equal(landingFor('assist.viral4creators.app',`/${locale}/qa${suffix}`,{'assist.viral4creators.app':'assistant'}),'qa');
+ }
+}
+assert.equal(landingFor('story-tales.viral4creators.app','/legal/privacy',landingVisitsConfig.landingsByHost),null);
 assert.equal(landingFor('welcome.viral4creators.app','/ru/stories',landingVisitsConfig.landingsByHost),null);
 assert.equal(landingFor('preview.vercel.app','/ru',landingVisitsConfig.landingsByHost),null);
 const canonical=readFileSync(resolve('src/components/LandingVisits.tsx'),'utf8');
 for(const app of ['sites-landing','publisher-site']) assert.equal(readFileSync(resolve('../'+app+'/src/components/LandingVisits.tsx'),'utf8'),canonical);
 assert.ok(canonical.includes("referrerPolicy: 'no-referrer'"));
 assert.ok(!canonical.includes('document.referrer') && !canonical.includes('location.search') && !canonical.includes('localStorage') && !canonical.includes('sessionStorage'));
-console.log('landing-visits: product classification, closed Story, production hosts, source-free transport and client parity checked');
+assert.equal(landingFor('story-tales.viral4creators.app','/uk/stories/private',landingVisitsConfig.landingsByHost),null);
+console.log('landing-visits: separate product classification, trailing slashes, production hosts, source-free transport and client parity checked');
 
 const originalFetch = globalThis.fetch;
 const sent: Array<{url: string; options: RequestInit}> = [];

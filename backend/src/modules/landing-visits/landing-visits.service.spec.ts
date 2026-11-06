@@ -71,6 +71,15 @@ describe('Landing views privacy and access', () => {
       visitOriginAllowed('https://story-tales.viral4creators.app', 'main'),
     ).toBe(false);
   });
+  it('isolates the three added marketing categories by exact origin', () => {
+    for (const landing of ['hands-free', 'qa']) {
+      expect(visitOriginAllowed('https://assist.viral4creators.app', landing)).toBe(true);
+      expect(visitOriginAllowed('https://story-tales.viral4creators.app', landing)).toBe(false);
+    }
+    expect(visitOriginAllowed('https://story-tales.viral4creators.app', 'story-tales')).toBe(true);
+    expect(visitOriginAllowed('https://assist.viral4creators.app', 'story-tales')).toBe(false);
+    expect(visitOriginAllowed('https://story-tales.viral4creators.app.evil.test', 'story-tales')).toBe(false);
+  });
   it('stores only the permitted dimensions and deduplicates request retries', async () => {
     prisma.platformSetting.findUnique.mockResolvedValue(null);
     const body = {

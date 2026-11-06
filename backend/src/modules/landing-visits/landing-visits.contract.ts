@@ -6,6 +6,9 @@ export const LANDINGS = [
   'tutorial',
   'assistant',
   'publisher',
+  'hands-free',
+  'qa',
+  'story-tales',
 ] as const;
 export const VISIT_LOCALES = ['ru', 'uk', 'en', 'de', 'es'] as const;
 const ORIGINS: Record<string, readonly string[]> = {
@@ -14,7 +17,8 @@ const ORIGINS: Record<string, readonly string[]> = {
   'https://viral-landing-seven.vercel.app': ['main', 'greeting', 'tutorial'],
   'https://greeting.viral4creators.app': ['greeting'],
   'https://tutorial.viral4creators.app': ['tutorial'],
-  'https://assist.viral4creators.app': ['assistant'],
+  'https://assist.viral4creators.app': ['assistant', 'hands-free', 'qa'],
+  'https://story-tales.viral4creators.app': ['story-tales'],
   'https://ai-publisher.org': ['publisher'],
   'https://www.ai-publisher.org': ['publisher'],
 };
