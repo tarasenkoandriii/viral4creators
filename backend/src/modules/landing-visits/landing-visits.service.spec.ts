@@ -53,7 +53,7 @@ describe('Landing views privacy and access', () => {
       visitHash('192.0.2.1', true, 'b'.repeat(64)),
     );
   });
-  it('does not accept absent, lookalike, wrong-product or closed Story origins', () => {
+  it('isolates landing categories and rejects absent, lookalike or wrong-product origins', () => {
     expect(
       visitOriginAllowed('https://tutorial.viral4creators.app', 'tutorial'),
     ).toBe(true);
@@ -70,8 +70,6 @@ describe('Landing views privacy and access', () => {
     expect(
       visitOriginAllowed('https://story-tales.viral4creators.app', 'main'),
     ).toBe(false);
-  });
-  it('isolates the three added marketing categories by exact origin', () => {
     for (const landing of ['hands-free', 'qa']) {
       expect(
         visitOriginAllowed('https://assist.viral4creators.app', landing),
