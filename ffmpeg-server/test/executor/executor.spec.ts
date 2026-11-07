@@ -68,7 +68,7 @@ const endless = () =>
     input_files: { src: 'https://inputs.test/src.mp4' },
     output_files: ['sig.txt'],
     ffmpeg_commands: [
-      '-stream_loop -1 -i {{src}} -vf "metadata=mode=print:file={{sig.txt}}" -an -t 600 -f null -',
+      '-stream_loop -1 -i {{src}} -vf "metadata=mode=print:file={{sig.txt}}" -an -f null -',
     ],
   });
 
