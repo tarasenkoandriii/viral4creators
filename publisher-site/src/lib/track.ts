@@ -27,7 +27,7 @@ export function buildEvent(
   name: ClientEventName,
   ctx: { path: string; contentSlug?: string; referrerHost?: string; attribution: Attribution },
   eventId: string,
-  now: Date = new Date(),
+  now?: Date,
 ): EventBody {
   const body: EventBody = {
     key: cfg.publicKey,
@@ -35,7 +35,7 @@ export function buildEvent(
     name,
     path: ctx.path,
     consentState: cfg.consentState,
-    clientAt: now.toISOString(),
+    clientAt: (now ?? new Date()).toISOString(),
   };
   if (ctx.contentSlug) body.contentSlug = ctx.contentSlug;
   if (ctx.referrerHost) body.referrerHost = ctx.referrerHost;
@@ -47,13 +47,9 @@ export function buildEvent(
 
 /** Сериализация с запасом по лимиту: лишнее (метки, referrer) отбрасывается, а не режется посередине. */
 export function serializeEvent(body: EventBody): string {
-  let text = JSON.stringify(body);
+  const text = JSON.stringify(body);
   if (new TextEncoder().encode(text).length <= EVENT_MAX_BYTES) return text;
-  const slim: EventBody = { ...body };
-  delete slim.utm;
-  delete slim.referrerHost;
-  text = JSON.stringify(slim);
-  return text;
+  return JSON.stringify({ ...body, utm: undefined, referrerHost: undefined });
 }
 
 export interface Transport {

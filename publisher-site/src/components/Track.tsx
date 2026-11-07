@@ -58,8 +58,8 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
         crypto.randomUUID(),
       );
       sendEvent(apiOrigin, body, {
-        sendBeacon: navigator.sendBeacon ? (u, d) => navigator.sendBeacon(u, d) : undefined,
-        fetch: (u, i) => fetch(u, i),
+        sendBeacon: navigator.sendBeacon?.bind(navigator),
+        fetch,
       });
     };
     const view = pathname + window.location.search;

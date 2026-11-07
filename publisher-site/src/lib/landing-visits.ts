@@ -80,8 +80,8 @@ export function landingVisitsTarget(
  * идентификатор посетителя). Минимум аргументов — меньше кода в чанке
  * трекера (бюджет ≤ 2048 Б gzip, §13.6).
  */
-export function sendLandingVisit(endpoint: string, search = '', hash = ''): void {
-  const sources = new URLSearchParams(search).getAll('utm_source');
+export function sendLandingVisit(endpoint: string, search?: string, hash?: string): void {
+  const source = new URLSearchParams(search).getAll('utm_source').join();
   // Порядок полей — как у `sendEvent` (track.ts): gzip чанка трекера сжимает повтор.
   fetch(endpoint, {
     method: 'POST',
@@ -89,7 +89,7 @@ export function sendLandingVisit(endpoint: string, search = '', hash = ''): void
       eventId: crypto.randomUUID(),
       landing: LANDING_VISITS_LANDING,
       locale: LANDING_VISITS_LOCALE,
-      source: sources.length === 1 && sources[0] === 'linkedin' ? 'linkedin' : 'unknown',
+      source: source === 'linkedin' ? 'linkedin' : 'unknown',
       traffic: hash === '#v4c-test' ? 'test' : 'unmarked',
     }),
     keepalive: true,

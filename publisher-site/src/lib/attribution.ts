@@ -66,7 +66,7 @@ export function utmFromSearch(search: string): Utm | null {
 /** Путь для события: только известные маршруты сайта, остальное — `/404` (в пути может оказаться ПД). */
 export function eventPathOf(pathname: string): string {
   const p = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  return /^\/(?:materials(?:\/[a-z0-9-]{3,80})?|contact|privacy)?$/.test(p) ? p || '/' : '/404';
+  return /^\/(?:materials(?:\/[a-z0-9-]{3,80})?|contact|privacy)?$/.test(p) ? p : '/404';
 }
 
 export function placementFromSearch(search: string): string | null {
@@ -77,9 +77,10 @@ export function placementFromSearch(search: string): string | null {
 /** 16 случайных байт → base64url (22 символа). */
 export function newSessionRef(bytes?: Uint8Array): string {
   bytes ??= crypto.getRandomValues(new Uint8Array(16));
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -118,7 +119,7 @@ export function pageAttribution(
   mode: AnalyticsStorage,
   storage: StorageLike | null,
   loc: Location,
-  now: Date = new Date(),
+  now?: Date,
 ): Attribution {
   const utm = utmFromSearch(loc.search);
   const placementCode = placementFromSearch(loc.search);
@@ -137,7 +138,12 @@ export function pageAttribution(
   if (!session) {
     session = {
       sessionRef: newSessionRef(),
-      firstTouch: { utm, placementCode, landedAt: now.toISOString(), landingPath: eventPathOf(loc.pathname) },
+      firstTouch: {
+        utm,
+        placementCode,
+        landedAt: (now ?? new Date()).toISOString(),
+        landingPath: eventPathOf(loc.pathname),
+      },
     };
     try {
       storage?.setItem(PUBLISHER_SESSION_STORAGE_KEY, JSON.stringify(session));
@@ -152,7 +158,6 @@ export function pageAttribution(
 
 /** Хост перехода — только чужой и только хост (без пути). */
 export function referrerHostOf(referrer: string, ownHost: string): string | undefined {
-  if (!referrer) return undefined;
   try {
     const u = new URL(referrer);
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined;
