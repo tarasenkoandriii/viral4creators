@@ -60,6 +60,7 @@ import {
 import { VOICE_BUDGET_EXHAUSTED, hintVoicePlan } from '../lib/hint-audio';
 import { VOICE_IDLE_REPEAT_MS, idleRepeatDue } from '../lib/voice-proactive';
 import {
+  captureSpeechTicket,
   claimVoiceBudgetNotice,
   hasGesture,
   hintPlayer,
@@ -294,8 +295,9 @@ export function HintLine({
     if (voicePlan !== 'speak' || !hintKey) return;
     spokenKeyRef.current = hintKey;
     pendingRef.current = hintKey;
+    const isSpeechCurrent = captureSpeechTicket();
     void getHintAudio(projectId, hintKey).then((answer) => {
-      if (pendingRef.current !== hintKey) return;
+      if (!isSpeechCurrent() || pendingRef.current !== hintKey) return;
       pendingRef.current = null;
       if (answer.kind === 'play') {
         if (!mutedRef.current) {
@@ -347,13 +349,19 @@ export function HintLine({
     ) {
       return;
     }
+    const isSpeechCurrent = captureSpeechTicket();
     let id: ReturnType<typeof setTimeout> | undefined;
     const arm = () => {
       clearTimeout(id);
       // Пока реплика звучит, простоя нет — отсчёт с её конца.
       if (hintPlayer.playing) return;
       id = setTimeout(() => {
-        if (mutedRef.current || repeatedKeyRef.current === played.key) return;
+        if (
+          !isSpeechCurrent() ||
+          mutedRef.current ||
+          repeatedKeyRef.current === played.key
+        )
+          return;
         repeatedKeyRef.current = played.key;
         sayReply(played.url, 'hint');
       }, VOICE_IDLE_REPEAT_MS);

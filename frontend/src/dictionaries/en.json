@@ -1948,6 +1948,8 @@
     "noJokesAlready": "There are no jokes already.",
     "nothingApplied": "Nothing was applied — that field is no longer on screen.",
     "actionStarted": "Starting: {action}.",
+    "actionCompleted": "Completed: {action}.",
+    "actionFailed": "The action could not be completed. Check its status before retrying.",
     "actionStale": "That action isn't available right now — please do it by hand.",
     "valueYes": "yes",
     "valueNo": "no",
@@ -3028,5 +3030,23 @@
       "trimmed": "The recording is longer than {{max}} s: only the first {{max}} s were kept. Listen to it before building.",
       "queued": "The recording is saved and will be sent right after the current action."
     }
+  },
+  "generationHistory": {
+    "title": "My generation history",
+    "hint": "Only connected video generation attempts appear here so far. Older runs and other generation types may be missing.",
+    "empty": "No recorded attempts yet. This does not mean you have never generated anything.",
+    "auth": "Sign in to view your history.",
+    "error": "History could not be loaded. Try refreshing it.",
+    "refresh": "Refresh",
+    "more": "Show more",
+    "recorded": "Recorded",
+    "attempt": "Attempt",
+    "unknownHint": "The dispatch outcome needs checking. Do not start again: the provider may have accepted the job.",
+    "queued": "Awaiting start or confirmation",
+    "processing": "Generating",
+    "complete": "Generation completed",
+    "failed": "Could not complete",
+    "cancelled": "Cancelled",
+    "unknown": "Needs checking"
   }
 }

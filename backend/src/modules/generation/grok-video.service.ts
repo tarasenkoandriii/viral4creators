@@ -1,3 +1,8 @@
+import {
+  ProviderDispatchUnknownError,
+  dispatchOutcomeUnknown,
+  guardProviderDispatch,
+} from '../../common/provider-dispatch';
 /**
  * GrokVideoService — тонкий клиент к синхронному (не batch) video-
  * эндпоинту xAI. Доп. запрос владельца продукта: Grok как провайдер
@@ -199,6 +204,8 @@ export class GrokVideoService {
    * ниже: у xAI это отдельный эндпоинт с другим телом.
    */
   async startGeneration(params: {
+    /** Internal opt-in while other pipelines migrate their reconciliation logic. */
+    protectDispatchOutcome?: boolean;
     prompt: string;
     imageUrl?: string;
     referenceImageUrls?: string[];
@@ -264,48 +271,56 @@ export class GrokVideoService {
       references: !!params.referenceImageUrls?.length,
     });
 
-    const res = await axios.post(
-      `${XAI_BASE_URL}/videos/generations`,
-      {
-        model: this.model,
-        prompt: params.prompt,
-        // М-6.1 седьмого аудита: REST-поле — `image: { url }`
-        // (ImageUrlContent, docs.x.ai image-to-video + proto
-        // GenerateVideoRequest.image), НЕ `image_url` — это kwarg
-        // Python SDK. Неизвестное поле xAI молча игнорирует (так уже
-        // было с `video_url`, см. `extendVideo`), то есть до правки
-        // image-to-video тихо рендерился как text-to-video без товара.
-        ...(params.imageUrl ? { image: { url: params.imageUrl } } : {}),
-        ...(params.referenceImageUrls?.length
-          ? {
-              reference_images: params.referenceImageUrls.map((url) => ({
-                url,
-              })),
-            }
-          : {}),
-        duration: params.durationSeconds,
-        aspect_ratio: params.aspectRatio,
-        resolution,
-        // Шлём поле только когда просим тишину: значение по умолчанию у
-        // xAI — `true`, и посылать его явно значило бы фиксировать у
-        // себя чужое умолчание.
-        ...(params.generateAudio === false ? { generate_audio: false } : {}),
-        ...(params.referenceAudioVoiceIds?.length
-          ? {
-              reference_audios: params.referenceAudioVoiceIds.map(
-                (voice_id) => ({ voice_id }),
-              ),
-            }
-          : {}),
-      },
-      {
-        headers: this.headers(),
-        timeout: REQUEST_TIMEOUT_MS,
-        validateStatus: () => true,
-      },
-    );
+    const send = () =>
+      axios.post(
+        `${XAI_BASE_URL}/videos/generations`,
+        {
+          model: this.model,
+          prompt: params.prompt,
+          // М-6.1 седьмого аудита: REST-поле — `image: { url }`
+          // (ImageUrlContent, docs.x.ai image-to-video + proto
+          // GenerateVideoRequest.image), НЕ `image_url` — это kwarg
+          // Python SDK. Неизвестное поле xAI молча игнорирует (так уже
+          // было с `video_url`, см. `extendVideo`), то есть до правки
+          // image-to-video тихо рендерился как text-to-video без товара.
+          ...(params.imageUrl ? { image: { url: params.imageUrl } } : {}),
+          ...(params.referenceImageUrls?.length
+            ? {
+                reference_images: params.referenceImageUrls.map((url) => ({
+                  url,
+                })),
+              }
+            : {}),
+          duration: params.durationSeconds,
+          aspect_ratio: params.aspectRatio,
+          resolution,
+          // Шлём поле только когда просим тишину: значение по умолчанию у
+          // xAI — `true`, и посылать его явно значило бы фиксировать у
+          // себя чужое умолчание.
+          ...(params.generateAudio === false ? { generate_audio: false } : {}),
+          ...(params.referenceAudioVoiceIds?.length
+            ? {
+                reference_audios: params.referenceAudioVoiceIds.map(
+                  (voice_id) => ({ voice_id }),
+                ),
+              }
+            : {}),
+        },
+        {
+          headers: this.headers(),
+          timeout: REQUEST_TIMEOUT_MS,
+          validateStatus: () => true,
+        },
+      );
+    const res = params.protectDispatchOutcome
+      ? await guardProviderDispatch(send)
+      : await send();
 
-    return this.readRequestId(res, 'Grok video start');
+    return this.readRequestId(
+      res,
+      'Grok video start',
+      params.protectDispatchOutcome,
+    );
   }
 
   /**
@@ -371,12 +386,18 @@ export class GrokVideoService {
   private readRequestId(
     res: { status: number; data?: { request_id?: string; id?: string } },
     what: string,
+    protectDispatch = false,
   ): GrokVideoStartResult {
-    if (res.status >= 400) {
+    if (res.status < 200 || res.status >= 300) {
+      if (protectDispatch && dispatchOutcomeUnknown({ status: res.status }))
+        throw new ProviderDispatchUnknownError();
       this.logger.error(
         `${what} failed: HTTP ${res.status} — ${JSON.stringify(res.data)}`,
       );
-      throw new Error(`${what} failed to start (HTTP ${res.status})`);
+      throw Object.assign(
+        new Error(`${what} failed to start (HTTP ${res.status})`),
+        { status: res.status },
+      );
     }
 
     // Не подтверждено буквально (см. доккомментарий класса, п.1) —
@@ -386,6 +407,7 @@ export class GrokVideoService {
       this.logger.error(
         `${what}: ответ без request_id — ${JSON.stringify(res.data)}`,
       );
+      if (protectDispatch) throw new ProviderDispatchUnknownError();
       throw new Error(`${what}: не удалось прочитать request_id из ответа`);
     }
 

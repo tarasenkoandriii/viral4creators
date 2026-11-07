@@ -1,3 +1,4 @@
+import { GenerationHistorySection } from '../generation-history/GenerationHistorySection';
 /**
  * PostprodScreen (#/postprod) — «Постпрод»: список ВСЕХ готовых роликов
  * пользователя (этап 88: «добавить вкладку постпрод — на ней список
@@ -368,6 +369,7 @@ export function PostprodScreen() {
       )}
       {!loading && error ? <LoadError error={error} onRetry={reload} /> : null}
 
+      <GenerationHistorySection />
       <TutorialsSection dict={dict} />
 
       {deleteError && (

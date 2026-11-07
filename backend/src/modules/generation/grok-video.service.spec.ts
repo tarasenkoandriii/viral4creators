@@ -1,3 +1,4 @@
+import { ProviderDispatchUnknownError } from '../../common/provider-dispatch';
 import axios from 'axios';
 
 jest.mock('../../config/configuration', () => ({
@@ -354,5 +355,55 @@ describe('GrokVideoService.listPresetVoices', () => {
     await expect(svc.listPresetVoices()).resolves.toEqual([
       { voiceId: 'rex', name: 'Rex', language: null },
     ]);
+  });
+});
+
+describe('Grok start dispatch uncertainty', () => {
+  const params = {
+    protectDispatchOutcome: true,
+    prompt: 'test',
+    durationSeconds: 8,
+    aspectRatio: '9:16',
+    resolution: '720p' as const,
+  };
+  beforeEach(() => mockedAxios.post.mockReset());
+  it.each([408, 500, 502, 503])(
+    'HTTP %s must not look safely retryable',
+    async (status) => {
+      mockedAxios.post.mockResolvedValueOnce({ status, data: {} });
+      await expect(
+        new GrokVideoService().startGeneration(params),
+      ).rejects.toBeInstanceOf(ProviderDispatchUnknownError);
+      expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    },
+  );
+  it('network timeout and accepted response without handle remain unknown', async () => {
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }),
+    );
+    await expect(
+      new GrokVideoService().startGeneration(params),
+    ).rejects.toBeInstanceOf(ProviderDispatchUnknownError);
+    mockedAxios.post.mockResolvedValueOnce({ status: 200, data: {} });
+    await expect(
+      new GrokVideoService().startGeneration(params),
+    ).rejects.toBeInstanceOf(ProviderDispatchUnknownError);
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+  });
+  it('unmigrated consumers keep the original transport contract', async () => {
+    const original = new Error('legacy network failure');
+    mockedAxios.post.mockRejectedValueOnce(original);
+    await expect(
+      new GrokVideoService().startGeneration({
+        ...params,
+        protectDispatchOutcome: false,
+      }),
+    ).rejects.toBe(original);
+  });
+  it('explicit HTTP 429 retains rejection status for retry policy', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ status: 429, data: {} });
+    await expect(
+      new GrokVideoService().startGeneration(params),
+    ).rejects.toMatchObject({ status: 429 });
   });
 });

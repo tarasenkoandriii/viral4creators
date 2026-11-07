@@ -1696,11 +1696,12 @@ DB-trigger снимает приёмку при смене файла, верс�
 
 | Маршрут | Что |
 |---|---|
-| `GET /guide-assist/v1/openapi.json` | OpenAPI 3.0.3 трёх операций (без ключа; 404 без ключей API или `API_PUBLIC_URL`) |
+| `GET /guide-assist/v1/openapi.json` | OpenAPI 3.0.3 четырёх read-only операций (без ключа; 404 без ключей API или `API_PUBLIC_URL`) |
 | `GET /guide-assist/v1/knowledge.md` | знания гида для «Админки» (Markdown, `ETag`, 304 по `If-None-Match`; публично — данных пользователей нет) |
 | `GET /guide-assist/v1/projects` | `listProjects` → `{ projects[{ id, order, type, scenario, scenarioTitle, updated }] }` — до 20 последних, без названий |
 | `GET /guide-assist/v1/projects/:projectId/facts` | `getProjectFacts` → `{ projectId, scenario, scenarioTitle, scenarioGoal, steps[{ id, goal, uiTarget }], facts[] }` — факты словами (`uiTarget` — `data-assist-id` кнопки шага в TMA); чужой/удалённый — 404 |
 | `GET /guide-assist/v1/account` | `getAccountSummary` → `{ plan: LITE\|STANDARD\|PREMIUM, projects }` |
+| `GET /guide-assist/v1/generation-history` | `listGenerationAttempts`: только история текущего подписанного владельца, 20 записей, opaque cursor, no-store; без медиа, промптов, расходов и обещания полноты; пилот проверяется на каждом чтении |
 
 sites-backend: `GET /wa/v1/frame?pk=` — для сайтов из
 `ASSIST_ADMIN_TMA_SITE_IDS` в `frame-ancestors` к verified-хостам «Админки»
@@ -2624,3 +2625,12 @@ Fallback к hosted (`FFMPEG_FALLBACK_HOSTED`, по умолчанию включ
 - **Story** — не повторяется (правила оплаты Story).
 
 Circuit breaker (`ffmpeg_routing.breakerFailures/breakerLastFailureAt/breakerOpenUntil/breakerProbeUntil/breakerProbeJobId`; учтённые задачи — `ffmpeg_breaker_jobs`). Отказом считаются доказанный отказ до приёма, неизвестный исход без найденной задачи и провал принятой задачи с `error_code` INTERNAL|INTERRUPTED|QUEUE_TIMEOUT|TIMEOUT|OOM; каждая задача учитывается один раз. Breaker открывается после ≥3 отказов в окне 15 минут: новые задачи идут к hosted на `FFMPEG_SELFHOSTED_BREAKER_MINUTES` (10). Учёт — атомарными UPDATE. Затем half-open: аренда в БД выдаётся ровно одной пробной задаче, остальные идут к hosted, пока проба не завершится (аренда до приёма 2 мин, после приёма 20 мин). Breaker закрывает успешное завершение пробы, а при закрытом breaker — любой успешной задачи своего сервера. Провал пробы открывает его снова. Провал принятой задачи по инфраструктуре: `status()` → `failed` с `errorCode` и `retryOnFallback: true`; сервис сам ничего не повторяет. Ошибки входа (`INPUT_*`, `COMMAND_FAILED`, `OUTPUT_*`) — без `retryOnFallback`. Статус hosted разбирается как до перехода (без `error_code`). Каждый fallback — предупреждение в логе и событие `ffmpeg_fallback_events` (не журнал оператора); расход такой задачи пишется как hosted. Журнал расходов: задачи selfhosted пишутся с `provider: FFMPEG_SELFHOSTED` (та же модель `ffmpeg-api` и оценка — списания и потолки не меняются).
+
+
+## Личная история генераций клиентского TMA
+
+| Маршрут | Доступ и ответ |
+|---|---|
+| `GET /generation-history?limit=20&before=<id>` | TelegramIdentityGuard; владелец определяется проверенной личностью, не query. limit 1–100, 60 запросов/мин на проверенного владельца, чужой cursor — 404. `items`, `nextCursor`, `coverage=session-video-partial`, no-store. Не содержит промптов, media URL и финансов. |
+
+Это проекция подключённых попыток сессионного видео, а не полная память всех модулей. `complete` означает техническое завершение, не принятие результата пользователем. Тексты новых разделов переведены на UK/RU/EN; DE/ES используют явный EN fallback. Платформа коннекторов должна отдельно импортировать новый read-only OpenAPI для собственного клиентского сайта; публикация API не меняет права других сайтов.

@@ -16,12 +16,13 @@ describe('Ш6 — OpenAPI фактов гида', () => {
     expect(factsServerUrl(undefined)).toBeNull();
   });
 
-  it('импорт платформы: три операции, все read, параметры поддержаны', () => {
+  it('импорт платформы: четыре операции, все read, параметры поддержаны', () => {
     const spec = parseOpenApi(JSON.stringify(buildGuideOpenApi(SERVER)));
     expect(spec.baseUrl).toBe(SERVER);
     expect(spec.operations.map((o) => o.operationId).sort()).toEqual([
       'getAccountSummary',
       'getProjectFacts',
+      'listGenerationAttempts',
       'listProjects',
     ]);
     for (const op of spec.operations) {

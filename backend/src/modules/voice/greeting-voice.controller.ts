@@ -16,9 +16,9 @@
  * `language` — язык, на котором говорили, определённый провайдером по
  * звуку (Soniox); у Gemini — `null`.
  *
- * /sessions convention — предъявитель UUID сессии и есть право доступа,
- * как у соседних `greeting-*` контроллеров. Расшифровка ничего не
- * применяет: разбор в поля брифа и команды — этап K3.
+ * Owned sessions are protected by the global SessionOwnerGuard (APP_GUARD).
+ * UUID capability access remains only for unowned anonymous sessions.
+ * Transcription does not apply changes; UI confirmation performs them.
  */
 
 import { Body, Controller, Param, Post, Req, UseGuards } from '@nestjs/common';

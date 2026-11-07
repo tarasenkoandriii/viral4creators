@@ -86,6 +86,7 @@ describe('модули спрашивают разрешение режима (�
         .fn()
         .mockResolvedValue({ sessionId: 's1', userId: 'u1' }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -116,6 +117,7 @@ describe('модули спрашивают разрешение режима (�
         productInformation: { productName: 'x', productDescription: 'y' },
       }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -143,6 +145,7 @@ describe('модули спрашивают разрешение режима (�
         },
       }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -171,6 +174,7 @@ describe('модули спрашивают разрешение режима (�
         .fn()
         .mockResolvedValue({ sessionId: 's1', userId: 'u1', scenes: [] }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -244,6 +248,7 @@ describe('модули спрашивают разрешение режима (�
         videoAnalysis: { characters: [{ id: 'c1', label: 'Ведущая' }] },
       }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -278,6 +283,7 @@ describe('модули спрашивают разрешение режима (�
         },
       }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
@@ -337,6 +343,7 @@ describe('модули спрашивают разрешение режима (�
           },
         }),
         updateSession: jest.fn(),
+        recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
         claimWork: jest.fn().mockResolvedValue(true),
         releaseWork: jest.fn().mockResolvedValue(undefined),
       };
@@ -401,6 +408,7 @@ describe('модули спрашивают разрешение режима (�
         originalVideo: { frame: { aspectRatio: '4:5' } },
       }),
       updateSession: jest.fn(),
+      recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
       claimWork: jest.fn().mockResolvedValue(true),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };

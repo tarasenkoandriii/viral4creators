@@ -1,3 +1,4 @@
+import { dispatchOutcomeUnknown } from '../../common/provider-dispatch';
 /**
  * GrokVideoBatchService — xAI Batch API для видео-генерации (ТЗ
  * VEO-MODEL-VERSION-CHOICE-SPEC.md §13, этап 2 плана реализации §14).
@@ -121,7 +122,7 @@ export interface GrokVideoBatchStatus {
 
 export type GrokVideoBatchSubmitResult =
   | { xaiBatchId: string; error?: undefined }
-  | { error: string; xaiBatchId?: undefined };
+  | { error: string; xaiBatchId?: undefined; outcomeUnknown?: boolean };
 
 @Injectable()
 export class GrokVideoBatchService {
@@ -184,7 +185,7 @@ export class GrokVideoBatchService {
 
     try {
       const created = await this.createBatch(name);
-      if (created.error !== undefined) return { error: created.error };
+      if (created.error !== undefined) return created;
       const xaiBatchId = created.xaiBatchId;
 
       this.logger.log(
@@ -225,7 +226,7 @@ export class GrokVideoBatchService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`не удалось подать видео-пачку "${name}": ${message}`);
-      return { error: message };
+      return { error: message, outcomeUnknown: true };
     }
   }
 
@@ -251,7 +252,7 @@ export class GrokVideoBatchService {
     );
     try {
       const created = await this.createBatch(name);
-      if (created.error !== undefined) return { error: created.error };
+      if (created.error !== undefined) return created;
       const xaiBatchId = created.xaiBatchId;
 
       const batchRequests = items.map((item) => ({
@@ -274,7 +275,7 @@ export class GrokVideoBatchService {
       this.logger.warn(
         `не удалось подать пачку расширений "${name}": ${message}`,
       );
-      return { error: message };
+      return { error: message, outcomeUnknown: true };
     }
   }
 
@@ -290,6 +291,7 @@ export class GrokVideoBatchService {
     );
     if (createRes.status < 200 || createRes.status >= 300) {
       return {
+        outcomeUnknown: dispatchOutcomeUnknown({ status: createRes.status }),
         error: `xAI вернул статус ${createRes.status} при создании пачки: ${JSON.stringify(createRes.data).slice(0, 300)}`,
       };
     }
@@ -297,6 +299,7 @@ export class GrokVideoBatchService {
       createRes.data?.id ?? createRes.data?.batch_id;
     if (!xaiBatchId) {
       return {
+        outcomeUnknown: true,
         error: `ответ xAI не содержит ни "id", ни "batch_id": ${JSON.stringify(createRes.data).slice(0, 300)}`,
       };
     }
@@ -320,6 +323,7 @@ export class GrokVideoBatchService {
     if (addRes.status < 200 || addRes.status >= 300) {
       await this.cancelBatchQuietly(xaiBatchId);
       return {
+        outcomeUnknown: dispatchOutcomeUnknown({ status: addRes.status }),
         error: `xAI вернул статус ${addRes.status} при добавлении запросов: ${JSON.stringify(addRes.data).slice(0, 300)}`,
       };
     }
@@ -333,6 +337,7 @@ export class GrokVideoBatchService {
     if (state && state.totalCount !== batchRequests.length) {
       await this.cancelBatchQuietly(xaiBatchId);
       return {
+        outcomeUnknown: true,
         error: `xAI принял ${state.totalCount} из ${batchRequests.length} запросов пачки ${xaiBatchId} — вероятно, неверный ключ запроса (см. GROK_BATCH_VIDEO_REQUEST_KEY / GROK_BATCH_VIDEO_EXTEND_KEY)`,
       };
     }

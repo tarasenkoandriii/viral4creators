@@ -4,8 +4,8 @@
  *   PATCH /sessions/:id/greeting-voice          { resembleVoiceId } | { presetVoiceId }
  *                                               | { sonioxVoice: { voiceId } | null }
  *
- * /sessions convention — предъявитель UUID сессии и есть право доступа
- * (как у соседнего `GreetingReferenceController`). Принадлежность
+ * Owned sessions are protected by the global SessionOwnerGuard; UUID
+ * capability access remains only for unowned anonymous sessions. Принадлежность
  * самого клона при этом проверяется отдельно, по `session.userId`, —
  * см. `GreetingVoiceService.resolveOwnClone`.
  */

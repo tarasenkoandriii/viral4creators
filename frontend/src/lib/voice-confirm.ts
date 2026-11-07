@@ -101,6 +101,14 @@ export type VoiceFieldApplyEffect =
   | { kind: 'needs-save'; button: string }
   | { kind: 'failed'; reason: string };
 
+/** UI receipt; operationId is present only when supplied by the server. */
+export type VoiceActionReceipt =
+  | { state: 'started'; operationId?: string }
+  | { state: 'succeeded'; operationId?: string }
+  | { state: 'needs-save'; button: string }
+  | { state: 'failed' }
+  | { state: 'unavailable' };
+
 /** Что на самом деле сделало «Да» (`VoiceCommandRegistry.applyCard`). */
 export type VoiceApplyOutcome =
   | {
@@ -114,7 +122,12 @@ export type VoiceApplyOutcome =
       /** Причины несохранённого — строки экрана. */
       failures?: string[];
     }
-  | { kind: 'action'; ran: boolean; label: string };
+  | {
+      kind: 'action';
+      ran: boolean;
+      label: string;
+      receipt?: VoiceActionReceipt;
+    };
 
 export interface VoiceApplyTexts {
   /** «Заполнил» — владелец не сказал, сохранено ли (старый контракт). */
@@ -123,6 +136,8 @@ export interface VoiceApplyTexts {
   nothingApplied: string;
   /** «Запускаю: {action}». */
   actionStarted: string;
+  actionCompleted?: string;
+  actionFailed?: string;
   /** «Это действие сейчас недоступно — сделайте руками». */
   actionStale: string;
   /** «Готово — сохранено». */
@@ -142,6 +157,28 @@ export function applyOutcomeLine(
   texts: VoiceApplyTexts
 ): { text: string; tone: 'success' | 'warning' } {
   if (outcome.kind === 'action') {
+    const receipt = outcome.receipt;
+    if (receipt?.state === 'failed') {
+      return { text: texts.actionFailed ?? texts.actionStale, tone: 'warning' };
+    }
+    if (receipt?.state === 'unavailable') {
+      return { text: texts.actionStale, tone: 'warning' };
+    }
+    if (receipt?.state === 'needs-save') {
+      return {
+        text: texts.filledNeedsSave.replace('{button}', receipt.button),
+        tone: 'success',
+      };
+    }
+    if (receipt?.state === 'succeeded') {
+      return {
+        text: (texts.actionCompleted ?? texts.saved).replace(
+          '{action}',
+          outcome.label
+        ),
+        tone: 'success',
+      };
+    }
     return outcome.ran
       ? {
           text: texts.actionStarted.replace('{action}', outcome.label),

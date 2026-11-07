@@ -1,4 +1,8 @@
 import {
+  ProviderDispatchUnknownError,
+  guardProviderDispatch,
+} from '../../common/provider-dispatch';
+import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -564,11 +568,39 @@ export class GenerationService {
     // Возвращаемое `usedCredit` здесь не нужно: `refundIfReserved` ниже
     // безопасен и без него (no-op, если резерва не было) — так было и
     // до этапа 132, см. комментарий у самого возврата.
-    await this.renderAccess.assertCanRender(
-      session.userId ?? null,
+    // Persist intent before credit reservation and provider work. If history
+    // is unavailable or a prior attempt is unresolved, do not spend again.
+    await this.sessionService.recordVideoAttempt(
+      sessionId,
       generatedVideoId,
-      { projectId: session.projectId ?? null },
+      'queued',
+      provider,
+      resolution,
     );
+    const recordStartFailure = async (unknown: boolean) => {
+      try {
+        await this.sessionService.recordVideoAttempt(
+          sessionId,
+          generatedVideoId,
+          unknown ? 'unknown' : 'failed',
+          provider,
+          resolution,
+        );
+      } catch {
+        // Keep the original error and the unresolved queued row; never auto-retry.
+        this.logger.warn('Generation attempt needs history reconciliation');
+      }
+    };
+    try {
+      await this.renderAccess.assertCanRender(
+        session.userId ?? null,
+        generatedVideoId,
+        { projectId: session.projectId ?? null },
+      );
+    } catch (error) {
+      await recordStartFailure(false);
+      throw error;
+    }
 
     // Г-2.3 (аудит round4, этап 64): кредит списан ВЫШЕ, до того, как Veo
     // реально стартовал. Раньше всё, что могло бросить между резервом и
@@ -602,13 +634,20 @@ export class GenerationService {
             avoidText,
           );
     } catch (error) {
+      await recordStartFailure(
+        error instanceof VeoOperationOrphanedError ||
+          error instanceof ProviderDispatchUnknownError,
+      );
       // Е-1.4 шестого аудита: `VeoOperationOrphanedError` значит, что Veo
       // УЖЕ реально стартовала (деньги потрачены) — автоматический
       // возврат кредита здесь означал бы либо бесплатный, либо ВТОРОЙ
       // платный рендер того же ролика при повторе. Кредит остаётся
       // списанным намеренно; для любого другого сбоя (до старта Veo)
       // возврат по-прежнему безопасен и обязателен, как и раньше.
-      if (!(error instanceof VeoOperationOrphanedError)) {
+      if (
+        !(error instanceof VeoOperationOrphanedError) &&
+        !(error instanceof ProviderDispatchUnknownError)
+      ) {
         await this.creditLedger.refundIfReserved(generatedVideoId);
       }
       throw error;
@@ -753,17 +792,19 @@ export class GenerationService {
       .join('\n');
 
     const start = (frame: VeoAspectRatio) =>
-      this.genai.models.generateVideos({
-        model: veoModel,
-        prompt: promptText,
-        ...(imageInput ? { image: imageInput } : {}),
-        config: {
-          durationSeconds: VIDEO_DURATION_SECONDS,
-          aspectRatio: frame,
-          ...(referenceImages ? { referenceImages } : {}),
-          ...(avoidText && isVeo30 ? { negativePrompt: avoidText } : {}),
-        },
-      });
+      guardProviderDispatch(() =>
+        this.genai.models.generateVideos({
+          model: veoModel,
+          prompt: promptText,
+          ...(imageInput ? { image: imageInput } : {}),
+          config: {
+            durationSeconds: VIDEO_DURATION_SECONDS,
+            aspectRatio: frame,
+            ...(referenceImages ? { referenceImages } : {}),
+            ...(avoidText && isVeo30 ? { negativePrompt: avoidText } : {}),
+          },
+        }),
+      );
 
     let operation: GenerateVideosOperation;
     try {
@@ -777,6 +818,7 @@ export class GenerationService {
         // requests may refuse 9:16 with "Unsupported output video aspect
         // ratio". Fall back to 16:9 and owe a crop rather than fail.
         if (
+          !(error instanceof ProviderDispatchUnknownError) &&
           referenceImages &&
           render.rendered === '9:16' &&
           /aspect ratio/i.test(this.extractErrorMessage(error))
@@ -796,18 +838,11 @@ export class GenerationService {
         }
       }
     } catch (error) {
+      if (error instanceof ProviderDispatchUnknownError) throw error;
       this.logger.error('Failed to start Veo generation:', error);
-      // Е-1.2 шестого аудита, этап 76: раньше ЛЮБАЯ ошибка самого вызова
-      // Veo (включая транзиентный 429/5xx у @google/genai — SDK бросает
-      // `ApiError` с числовым полем `status`, см. dist/genai.d.ts) попадала
-      // в тот же BadRequestException, что и постоянные ошибки валидации
-      // запроса. Воркеры партии/A-B (catalog-batch-worker.service.ts,
-      // ab-test-worker.service.ts) классифицируют BadRequestException как
-      // «ретраить бессмысленно» по имени класса — транзиентный сбой уводил
-      // строку в FAILED навсегда, хотя обычный повтор почти наверняка
-      // прошёл бы. ServiceUnavailableException не входит в их
-      // NON_RETRYABLE_NAMES — такая ошибка проходит обычным
-      // экспоненциальным бэкоффом, как и должна.
+      // Explicit provider rejection remains an ordinary error. Uncertain
+      // dispatch (including 5xx) was already rethrown above; do not advertise
+      // it as safely retryable or refund an unconfirmed render automatically.
       const status = (error as { status?: number } | undefined)?.status;
       const transient =
         typeof status === 'number' && (status === 429 || status >= 500);
@@ -1070,10 +1105,15 @@ export class GenerationService {
             },
           ],
         );
-        if (submitted.error) throw new Error(submitted.error);
+        if (submitted.error) {
+          if (submitted.outcomeUnknown)
+            throw new ProviderDispatchUnknownError();
+          throw new Error(submitted.error);
+        }
         xaiBatchId = submitted.xaiBatchId;
       } else {
         ({ requestId } = await this.grokVideo.startGeneration({
+          protectDispatchOutcome: true,
           prompt: promptText,
           imageUrl,
           referenceImageUrls,
@@ -1086,6 +1126,7 @@ export class GenerationService {
         }));
       }
     } catch (error) {
+      if (error instanceof ProviderDispatchUnknownError) throw error;
       this.logger.error('Failed to start Grok generation:', error);
       // М-1.8 седьмого аудита (остаток Е-1.2 для Grok-пути): транзиентный
       // 429/5xx или сетевой обрыв — ServiceUnavailableException, чтобы

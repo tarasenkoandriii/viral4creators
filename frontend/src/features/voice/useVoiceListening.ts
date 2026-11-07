@@ -479,6 +479,8 @@ export function useVoiceListening(opts: {
   }, [apply, onDetector, openStream, recordingError]);
 
   const disable = useCallback(() => {
+    // Includes hidden-page shutdown: pending TTS must not restart audio.
+    playbackRef.current?.stop();
     releaseAll();
     apply({ type: 'disable' });
   }, [apply, releaseAll]);

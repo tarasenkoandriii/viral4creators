@@ -50,7 +50,7 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
     openapi: '3.0.3',
     info: {
       title: 'Viral4Creators — факты мастера для помощника',
-      version: '1',
+      version: '1.1',
       description:
         'Только чтение. Пользователь определяется заголовком X-V4C-Actor (sub его employee-JWT); чужие проекты — 404. ' +
         FACTS_NOTE,
@@ -90,6 +90,35 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
             '401': keyErr,
             '403': actorErr,
             '404': err,
+          },
+        },
+      },
+      '/generation-history': {
+        get: {
+          operationId: 'listGenerationAttempts',
+          summary: 'Личные записанные попытки генерации видео',
+          description:
+            'Только история пользователя из проверенного X-V4C-Actor, до 20 попыток. Покрытие частичное: пустой ответ не доказывает отсутствие прежних запусков. Статус unknown требует сверки; complete не означает принятие пользователем. Стоимость и полная история недоступны. Названий, промптов, медиа и секретов нет.',
+          parameters: [
+            {
+              name: 'before',
+              in: 'query',
+              required: false,
+              description:
+                'nextCursor предыдущей страницы; курсор только этого пользователя',
+              schema: { type: 'string', maxLength: 200 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Частичная история попыток с ограничениями полноты',
+            },
+            '400': { description: 'Некорректная пагинация' },
+            '401': keyErr,
+            '403': {
+              description: 'Актор недействителен или доступ помощника отключён',
+            },
+            '404': { description: 'Курсор недоступен' },
           },
         },
       },

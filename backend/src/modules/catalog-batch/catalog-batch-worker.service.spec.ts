@@ -1,3 +1,4 @@
+import { ProviderDispatchUnknownError } from '../../common/provider-dispatch';
 import { CatalogBatchWorkerService } from './catalog-batch-worker.service';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { DailySpendLimitExceededException } from '../../common/spend-limits';
@@ -615,6 +616,24 @@ describe('CatalogBatchWorkerService', () => {
       );
     });
 
+    it('uncertain dispatch never schedules another paid attempt', async () => {
+      const { service, prisma, generation } = setup({ rows: [row()] });
+      generation.generateVideo.mockRejectedValueOnce(
+        new ProviderDispatchUnknownError(),
+      );
+      const result = await service.runBatch();
+      expect(result.failed).toBe(1);
+      expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'FAILED',
+            nextAttemptAt: null,
+          }),
+        }),
+      );
+      expect(generation.generateVideo).toHaveBeenCalledTimes(1);
+    });
+
     it('Е-1.4 шестого аудита: VeoOperationOrphanedError (Veo уже реально стартовала, деньги потрачены) — сразу терминальный FAILED, без бэкоффа', async () => {
       // Обычный бэкофф здесь опасен: `videoStarted` в этой строке
       // остаётся false (запись в сессию как раз и не удалась), значит
@@ -1156,7 +1175,7 @@ describe('CatalogBatchWorkerService', () => {
             generationPrompt: { finalText: 'x' },
             productInformation: { productImageUrl: 'https://blob.test/p.png' },
           },
-          grokSubmitResult: { error: 'xAI вернул статус 500' },
+          grokSubmitResult: { error: 'xAI вернул статус 429' },
         });
 
         await service.runBatch();
@@ -1176,6 +1195,28 @@ describe('CatalogBatchWorkerService', () => {
         expect(prisma.catalogBatchItem.updateMany).not.toHaveBeenCalledWith(
           expect.objectContaining({ data: { status: 'GENERATING' } }),
         );
+      });
+
+      it('uncertain batch submission keeps pending marker for reconciliation', async () => {
+        const { service, prisma, grokBatch } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'x' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          grokSubmitResult: { error: 'timeout', outcomeUnknown: true },
+        });
+        await service.runBatch();
+        expect(grokBatch.submitBatch).toHaveBeenCalledTimes(1);
+        expect(prisma.catalogBatchRun.update).not.toHaveBeenCalledWith({
+          where: { id: 'run1' },
+          data: { xaiBatchId: null },
+        });
       });
 
       it('М-3.6: параллельный тик уже поставил метку подачи (count 0) — подача пропускается', async () => {

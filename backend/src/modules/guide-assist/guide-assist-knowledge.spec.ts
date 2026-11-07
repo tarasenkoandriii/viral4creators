@@ -90,4 +90,14 @@ describe('Ш6 — вид фактов проекта', () => {
     ]);
     expect(v.facts).toEqual(['повод задан']);
   });
+  it('history rules forbid unsupported completeness, cost and acceptance claims', () => {
+    const md = buildGuideKnowledge();
+    expect(md).toContain('listGenerationAttempts');
+    expect(md).toContain('Покрытие пока частичное');
+    expect(md).toContain(
+      'не означает, что пользователь раньше ничего не генерировал',
+    );
+    expect(md).toContain('не придумывайте расходы');
+    expect(md).toContain('не советуйте повторный запуск');
+  });
 });

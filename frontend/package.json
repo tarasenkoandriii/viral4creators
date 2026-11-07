@@ -11,7 +11,8 @@
     "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done && npm run test:voice-runtime && npm run test:voice-neural",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
-    "test:voice-runtime": "node scripts/voice-recording-runtime.test.cjs && node scripts/voice-neural-runtime.test.cjs",
+    "test:history-browser": "node scripts/test-generation-history-browser.cjs",
+    "test:voice-runtime": "node scripts/voice-recording-runtime.test.cjs && node scripts/voice-neural-runtime.test.cjs && node scripts/voice-speech-lifecycle.test.cjs",
     "prebuild": "node scripts/prepare-voice-vad.mjs",
     "predev": "node scripts/prepare-voice-vad.mjs",
     "test:voice-neural": "node scripts/voice-neural-acceptance.test.cjs"

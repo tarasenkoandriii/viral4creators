@@ -476,3 +476,17 @@ export function createSpeechQueue(player: QueuePlayer): SpeechQueue {
     },
   };
 }
+
+/** Invalidates pending speech as well as already queued audio after Stop. */
+export function createSpeechEpoch() {
+  let epoch = 0;
+  return {
+    capture(): () => boolean {
+      const captured = epoch;
+      return () => captured === epoch;
+    },
+    invalidate(): void {
+      epoch += 1;
+    },
+  };
+}

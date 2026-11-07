@@ -189,6 +189,65 @@ check('значения брифа: читаются в момент вызов�
   eq(reg.screenValues(), null);
 });
 
+check(
+  'async action waits for receipt instead of reporting completion early',
+  async () => {
+    const reg = new VoiceCommandRegistry();
+    let finish!: (value: { state: 'succeeded'; operationId: string }) => void;
+    reg.addCommand('regenerate-script', () => ({
+      propose: () => ({ kind: 'manual' }),
+      run: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    }));
+    let settled = false;
+    const pending = reg
+      .applyCard({ kind: 'action', command: 'regenerate-script', label: 'L' })
+      .then((out) => {
+        settled = true;
+        return out;
+      });
+    await Promise.resolve();
+    eq(settled, false);
+    finish({ state: 'succeeded', operationId: 'server-operation' });
+    eq(await pending, {
+      kind: 'action',
+      ran: true,
+      label: 'L',
+      receipt: { state: 'succeeded', operationId: 'server-operation' },
+    });
+  }
+);
+
+check(
+  'throw and rejected action return failure without leaking error text',
+  async () => {
+    for (const run of [
+      () => {
+        throw Error('private-provider-detail');
+      },
+      async () => {
+        throw Error('private-provider-detail');
+      },
+    ]) {
+      const reg = new VoiceCommandRegistry();
+      reg.addCommand('regenerate-script', () => ({
+        propose: () => ({ kind: 'manual' }),
+        run,
+      }));
+      eq(
+        await reg.applyCard({
+          kind: 'action',
+          command: 'regenerate-script',
+          label: 'L',
+        }),
+        { kind: 'action', ran: true, label: 'L', receipt: { state: 'failed' } }
+      );
+    }
+  }
+);
+
 void queue.then(() => {
   console.log(
     failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`

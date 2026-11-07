@@ -1,3 +1,4 @@
+import { GenerationHistoryService } from '../generation-history/generation-history.service';
 /**
  * Маршруты гида «Админка» (Э-С Ш6).
  *
@@ -19,6 +20,8 @@
  */
 import {
   Controller,
+  ForbiddenException,
+  Query,
   Get,
   Header,
   HttpCode,
@@ -117,7 +120,38 @@ function sendJson(res: Response, body: unknown): void {
 
 @Controller('guide-assist/v1')
 export class GuideFactsController {
-  constructor(private readonly guide: GuideAssistService) {}
+  constructor(
+    private readonly guide: GuideAssistService,
+    private readonly history: GenerationHistoryService,
+  ) {}
+
+  /** Bounded private facts, retrieved on demand; no prompts, media URLs or costs. */
+  @Get('generation-history')
+  @UseGuards(GuideConnectorGuard, RateLimitGuard)
+  @RateLimit(GUIDE_FACTS_RATE_LIMIT)
+  async generationHistory(
+    @Req() req: ConnectorRequest,
+    @Query('before') before: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const userId = req.guideUserId!;
+    if ((await this.guide.engineOf(userId)) !== 'assist')
+      throw new ForbiddenException('Assistant access is disabled');
+    const page = await this.history.list(userId, 20, before);
+    sendJson(res, {
+      coverage: page.coverage,
+      completeHistory: false,
+      costsAvailable: false,
+      userAcceptanceAvailable: false,
+      attempts: page.items.map((row) => ({
+        attemptId: row.id,
+        status: row.status,
+        recordedAt: row.createdAt,
+        resolution: row.resolution,
+      })),
+      nextCursor: page.nextCursor,
+    });
+  }
 
   /** Спецификация без секретов. Выключенный API — 404 (не оракул ключа). */
   @Get('openapi.json')

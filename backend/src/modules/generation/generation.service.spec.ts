@@ -1,3 +1,4 @@
+import { ProviderDispatchUnknownError } from '../../common/provider-dispatch';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles: private fetchReference */
 /**
  * Денежный шлюз перед Veo (ТЗ §25.3, §26.4).
@@ -61,6 +62,7 @@ function build(session: unknown = readySession()) {
   const sessions = {
     getSession: jest.fn().mockResolvedValue(session),
     updateSession: jest.fn().mockResolvedValue(undefined),
+    recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
     // Этап 84: крон-досмотр постобработки — по умолчанию ничего не
@@ -356,7 +358,9 @@ describe('GenerationService.generateVideo — возврат кредита пр
   it('Veo отклонил запрос — кредит возвращается', async () => {
     const { svc, creditLedger } = build();
     creditLedger.reserveForGeneration.mockResolvedValue(true);
-    generateVideos.mockRejectedValue(new Error('quota exceeded'));
+    generateVideos.mockRejectedValue(
+      Object.assign(new Error('quota exceeded'), { status: 400 }),
+    );
 
     await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -371,7 +375,7 @@ describe('GenerationService.generateVideo — возврат кредита пр
     expect(refundedId).toBe(reservedId);
   });
 
-  it('Е-1.2 шестого аудита: транзиентный сбой Veo (429/5xx у @google/genai) — ServiceUnavailableException, НЕ BadRequestException', async () => {
+  it('Е-1.2 шестого аудита: 429 permits safe retry, but 5xx dispatch requires reconciliation', async () => {
     // Воркеры партии/A-B классифицируют BadRequestException как "не
     // повторять" по имени класса — до этой правки транзиентный сбой
     // (лимит скорости, временная недоступность) уводил строку партии в
@@ -391,16 +395,15 @@ describe('GenerationService.generateVideo — возврат кредита пр
       Object.assign(new Error('internal error'), { status: 503 }),
     );
     const busy = svc.generateVideo('s1');
-    await expect(busy).rejects.toBeInstanceOf(ServiceUnavailableException);
-    // Текст и статус провайдера — в лог; человеку — русская фраза и код.
+    await expect(busy).rejects.toBeInstanceOf(ProviderDispatchUnknownError);
     await expect(busy).rejects.toMatchObject({
-      response: { code: 'GENERATION_PROVIDER_BUSY' },
+      response: { code: 'GENERATION_RECONCILIATION_REQUIRED' },
     });
     await expect(busy).rejects.not.toThrow(/internal error|503/);
-    expect(creditLedger.refundIfReserved).toHaveBeenCalled();
+    expect(creditLedger.refundIfReserved).not.toHaveBeenCalled();
   });
 
-  it('Е-1.2: сбой Veo БЕЗ числового .status (валидационная ошибка) — остаётся BadRequestException, как раньше', async () => {
+  it('Е-1.2: явный HTTP 400 от Veo остаётся подтверждённым отказом', async () => {
     const { svc, creditLedger } = build();
     creditLedger.reserveForGeneration.mockResolvedValue(true);
     generateVideos.mockRejectedValue(
@@ -462,7 +465,9 @@ describe('GenerationService.generateVideo — возврат кредита пр
   it('кредита не было (обычный дневной лимит) — сбой всё равно не роняет вызов refundIfReserved, он безопасный no-op', async () => {
     const { svc, creditLedger } = build();
     creditLedger.reserveForGeneration.mockResolvedValue(false);
-    generateVideos.mockRejectedValue(new Error('quota exceeded'));
+    generateVideos.mockRejectedValue(
+      Object.assign(new Error('quota exceeded'), { status: 400 }),
+    );
 
     await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -917,5 +922,90 @@ describe('GenerationService.generateVideo — стена (этап 132)', () => 
     creditLedger.reserveForGeneration.mockResolvedValue(true);
     await svc.generateVideo('s1');
     expect(generateVideos).toHaveBeenCalled();
+  });
+});
+
+describe('GenerationService pre-dispatch personal history', () => {
+  it('history failure prevents credit reservation and provider work', async () => {
+    const { svc, sessions, creditLedger, blob } = build();
+    sessions.recordVideoAttempt.mockRejectedValueOnce(
+      new Error('history offline'),
+    );
+    await expect(svc.generateVideo('s1')).rejects.toThrow('history offline');
+    expect(generateVideos).not.toHaveBeenCalled();
+    expect(blob.downloadBuffer).not.toHaveBeenCalled();
+    expect(creditLedger.reserveForGeneration).not.toHaveBeenCalled();
+    expect(creditLedger.refundIfReserved).not.toHaveBeenCalled();
+  });
+
+  it('records access refusal as a failed attempt, keeping its server-generated id', async () => {
+    const { svc, sessions, plans } = build();
+    plans.assertCanSpendUser.mockRejectedValueOnce(
+      new ForbiddenException('limit'),
+    );
+    await expect(svc.generateVideo('s1')).rejects.toThrow('limit');
+    const calls = sessions.recordVideoAttempt.mock.calls;
+    expect(calls.map((call) => call[2])).toEqual(['queued', 'failed']);
+    expect(calls[0][1]).toBe(calls[1][1]);
+    expect(generateVideos).not.toHaveBeenCalled();
+  });
+
+  it('records failure before dispatch without changing refund behavior', async () => {
+    const { svc, sessions, blob, creditLedger } = build();
+    blob.downloadBuffer.mockRejectedValueOnce(new Error('missing input'));
+    await expect(svc.generateVideo('s1')).rejects.toThrow('missing input');
+    expect(
+      sessions.recordVideoAttempt.mock.calls.map((call) => call[2]),
+    ).toEqual(['queued', 'failed']);
+    expect(generateVideos).not.toHaveBeenCalled();
+    expect(creditLedger.refundIfReserved).toHaveBeenCalledWith(
+      sessions.recordVideoAttempt.mock.calls[0][1],
+    );
+  });
+
+  it('accepted provider response without handle remains unknown, never a safe failure/refund', async () => {
+    const { svc, sessions, creditLedger } = build();
+    generateVideos.mockResolvedValueOnce({});
+    await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
+      VeoOperationOrphanedError,
+    );
+    expect(
+      sessions.recordVideoAttempt.mock.calls.map((call) => call[2]),
+    ).toEqual(['queued', 'unknown']);
+    expect(creditLedger.refundIfReserved).not.toHaveBeenCalled();
+    expect(generateVideos).toHaveBeenCalledTimes(1);
+  });
+
+  it('secondary journal failure preserves the original provider uncertainty', async () => {
+    const { svc, sessions, creditLedger } = build();
+    sessions.recordVideoAttempt
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('history offline'));
+    generateVideos.mockResolvedValueOnce({});
+    await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
+      VeoOperationOrphanedError,
+    );
+    expect(creditLedger.refundIfReserved).not.toHaveBeenCalled();
+    expect(generateVideos).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('provider dispatch uncertainty is not a safe new render', () => {
+  it.each([
+    Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }),
+    Object.assign(new Error('request timeout'), { status: 408 }),
+    Object.assign(new Error('gateway'), { status: 502 }),
+  ])('records unknown without a refund or another send: %s', async (error) => {
+    const { svc, sessions, creditLedger } = build();
+    generateVideos.mockRejectedValueOnce(error);
+    await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
+      ProviderDispatchUnknownError,
+    );
+    expect(generateVideos).toHaveBeenCalledTimes(1);
+    expect(creditLedger.refundIfReserved).not.toHaveBeenCalled();
+    expect(
+      sessions.recordVideoAttempt.mock.calls.map((call) => call[2]),
+    ).toEqual(['queued', 'unknown']);
   });
 });

@@ -144,6 +144,7 @@ enum UserPlan {
 // урезанный до того, что реально нужно этому продукту — без ролей
 // модерации/онбординга, которых здесь нет.
 model User {
+  generationHistory GenerationHistoryRun[]
   storyGifts         StoryGift[]
   storyNarratorLooks StoryNarratorLook[] // WP5
   storyNarratorLookCalls StoryNarratorLookCall[] // ST2-S-02: quota ledger
@@ -5683,4 +5684,43 @@ model LandingVisit {
 
   @@index([createdAt, landing, locale])
   @@map("landing_visits")
+}
+
+/// Private per-user attempt metadata. No Session FK: session TTL must not erase it.
+/// No media URLs, raw prompts, auth context, or library publication here.
+model GenerationHistoryRun {
+  events GenerationHistoryEvent[]
+  id           String   @id
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId    String
+  module       String
+  source       String
+  status       String
+  revision     Int
+  provider     String?
+  model        String?
+  resolution   String?
+  durationSeconds Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, createdAt, id])
+  @@index([userId, sessionId])
+  @@map("generation_history_runs")
+}
+
+/// Observed states only; snapshot is not a reconstructed historical transition.
+model GenerationHistoryEvent {
+  id String @id @default(cuid())
+  runId String
+  run GenerationHistoryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  revision Int
+  kind String
+  fromStatus String?
+  status String
+  observedAt DateTime @default(now())
+
+  @@unique([runId, revision])
+  @@map("generation_history_events")
 }

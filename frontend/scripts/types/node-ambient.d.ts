@@ -36,6 +36,7 @@ declare module 'node:fs' {
 }
 
 declare const process: {
+  exitCode?: number;
   exit(code?: number): never;
   argv: string[];
   env: Record<string, string | undefined>;

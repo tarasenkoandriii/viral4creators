@@ -101,6 +101,7 @@ function build(
     }),
     // М-2.2 седьмого аудита: продолжение цепочки — под замком
     // 'chain-continue'; по умолчанию замок свободен.
+    recordVideoAttempt: jest.fn().mockResolvedValue(undefined),
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
   };

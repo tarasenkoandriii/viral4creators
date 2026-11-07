@@ -19,6 +19,7 @@
 import { createContext, useContext, useEffect, useRef } from 'react';
 import type {
   VoiceApplyOutcome,
+  VoiceActionReceipt,
   VoiceCard,
   VoiceFieldApplyEffect,
 } from '../../lib/voice-confirm';
@@ -59,7 +60,7 @@ export interface VoiceCommandHandler {
   /** Что показать на карточке — или отказ с причиной. */
   propose: (args: Record<string, string> | undefined) => VoiceCommandOutcome;
   /** Действие карточки `action` — после «Да». */
-  run?: () => void;
+  run?: () => void | VoiceActionReceipt | Promise<void | VoiceActionReceipt>;
 }
 
 type Getter<T> = () => T;
@@ -146,8 +147,24 @@ export class VoiceCommandRegistry {
   async applyCard(card: VoiceCard): Promise<VoiceApplyOutcome> {
     if (card.kind === 'action') {
       const run = this.commands.get(card.command)?.()?.run;
-      if (run) run();
-      return { kind: 'action', ran: !!run, label: card.label };
+      if (!run) return { kind: 'action', ran: false, label: card.label };
+      try {
+        const receipt = await run();
+        return {
+          kind: 'action',
+          ran: true,
+          label: card.label,
+          ...(receipt ? { receipt } : {}),
+        };
+      } catch {
+        // Never expose raw provider/network errors to the assistant or reject unhandled.
+        return {
+          kind: 'action',
+          ran: true,
+          label: card.label,
+          receipt: { state: 'failed' },
+        };
+      }
     }
     const byOwner = new Map<Getter<VoiceFieldApplier>, VoiceField[]>();
     for (const f of card.fields) {

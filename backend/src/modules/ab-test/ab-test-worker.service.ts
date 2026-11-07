@@ -122,6 +122,7 @@ const NON_RETRYABLE_NAMES = new Set([
   'NotFoundException',
   'BadRequestException',
   'VeoOperationOrphanedError',
+  'ProviderDispatchUnknownError',
 ]);
 
 @Injectable()

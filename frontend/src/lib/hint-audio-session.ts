@@ -28,6 +28,7 @@ import {
   createOnceClaim,
   dropLegacyBudgetKey,
   createSpeechQueue,
+  createSpeechEpoch,
   readMuted,
   writeMuted,
   type SpeechTag,
@@ -37,6 +38,7 @@ import {
 } from './hint-audio';
 import { usePlanState } from './plan-context';
 import { getTelegramWebApp } from './telegram';
+import { GUIDE_IDENTITY_EVENT } from './guide-assist';
 
 export const hintPlayer = createHintPlayer(
   () => new Audio() as unknown as AudioLike
@@ -47,6 +49,10 @@ export const hintPlayer = createHintPlayer(
  * общего плеера. Подсказка шага и проактивная речь говорят через неё —
  * новая реплика ждёт конца звучащей, а не обрывает её.
  */
+const speechEpoch = createSpeechEpoch();
+/** Capture before a request/timer; check again before any delayed playback. */
+export const captureSpeechTicket = speechEpoch.capture;
+
 export const speechQueue = createSpeechQueue(hintPlayer);
 hintPlayer.onPlayingChange((playing) => {
   if (!playing) speechQueue.idle(Date.now());
@@ -99,6 +105,7 @@ export function isHintPlaying(): boolean {
 
 /** Замолчать сейчас — человек заговорил поверх советника. */
 export function stopHint(): void {
+  speechEpoch.invalidate();
   // Ожидающая реплика тоже снимается: иначе она зазвучала бы поверх
   // того, что человек сейчас говорит.
   speechQueue.drop();
@@ -120,10 +127,7 @@ export function isHintMuted(): boolean {
 export function setHintMuted(next: boolean): void {
   mutedNow = next;
   writeMuted(deviceStorage(), next);
-  if (next) {
-    speechQueue.drop();
-    hintPlayer.stop();
-  }
+  if (next) stopHint();
   for (const cb of mutedSubscribers) cb(next);
 }
 
@@ -185,7 +189,15 @@ function budgetUserId(): string {
  */
 export function useVoiceBudgetOwner(): VoiceBudgetOwner {
   const plan = usePlanState()?.plan ?? null;
-  const [userId] = useState(budgetUserId);
+  const [userId, setUserId] = useState(budgetUserId);
+  useEffect(() => {
+    const refresh = () => {
+      stopHint();
+      setUserId(budgetUserId());
+    };
+    window.addEventListener(GUIDE_IDENTITY_EVENT, refresh);
+    return () => window.removeEventListener(GUIDE_IDENTITY_EVENT, refresh);
+  }, []);
   useEffect(dropLegacyOnce, []);
   return useMemo(() => ({ userId, plan }), [userId, plan]);
 }

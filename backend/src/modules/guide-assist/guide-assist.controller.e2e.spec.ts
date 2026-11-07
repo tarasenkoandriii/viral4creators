@@ -1,3 +1,4 @@
+import { GenerationHistoryService } from '../generation-history/generation-history.service';
 /* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники */
 /**
  * Контракт маршрутов Ш6 по HTTP: настоящий Nest, настоящий сервис и
@@ -57,6 +58,30 @@ const prisma = {
     findMany: jest.fn(async () => []),
     count: jest.fn(async () => 0),
   },
+  generationHistoryRun: {
+    findFirst: jest.fn(async ({ where }: any) =>
+      where.id === 'u1-run' && where.userId === 'u1'
+        ? { id: 'u1-run', createdAt: new Date('2026-11-01') }
+        : null,
+    ),
+    findMany: jest.fn(async ({ where }: any) =>
+      where.userId === 'u1'
+        ? [
+            {
+              id: 'u1-run',
+              sessionId: 'private-session',
+              userId: 'u1',
+              status: 'unknown',
+              createdAt: new Date('2026-11-01'),
+              resolution: '720p',
+              provider: 'private-provider',
+              model: 'private-model',
+              source: 'unknown',
+            },
+          ]
+        : [],
+    ),
+  },
   session: { findFirst: jest.fn(async () => null) },
   clientSiteTutorialDraft: { findUnique: jest.fn(async () => null) },
 };
@@ -71,6 +96,10 @@ async function boot(): Promise<INestApplication> {
     providers: [
       { provide: GuideAssistService, useValue: svc },
       GuideConnectorGuard,
+      {
+        provide: GenerationHistoryService,
+        useValue: new GenerationHistoryService(prisma as any),
+      },
     ],
   })
     .overrideGuard(TelegramIdentityGuard)
@@ -248,7 +277,12 @@ describe('Ш6 — маршруты гида «Админка» (e2e)', () => {
       .set('x-v4c-actor', actorOf('u2', SECRET))
       .expect(200);
     expect(limited).toEqual(['u2']);
-    for (const h of ['projects', 'facts', 'account'] as const) {
+    for (const h of [
+      'projects',
+      'facts',
+      'account',
+      'generationHistory',
+    ] as const) {
       const rules = Reflect.getMetadata(
         RATE_LIMIT_KEY,
         GuideFactsController.prototype[h],
@@ -323,5 +357,66 @@ describe('Ш6 — маршруты гида «Админка» (e2e)', () => {
       .get('/api/guide-assist/v1/knowledge.md')
       .expect(200);
     expect(ok.text).toMatch(/^# Мастер Viral4Creators/);
+  });
+  it('history facts require connector key and valid signed actor before reading data', async () => {
+    await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history')
+      .expect(401);
+    await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history')
+      .set('authorization', `Bearer ${KEY}`)
+      .set('x-v4c-actor', 'u1')
+      .expect(403);
+    expect(prisma.generationHistoryRun.findMany).not.toHaveBeenCalled();
+  });
+
+  it('history facts are bounded, private, uncached and explicitly incomplete', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history')
+      .set('authorization', `Bearer ${KEY}`)
+      .set('x-v4c-actor', actor())
+      .expect(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body).toMatchObject({
+      completeHistory: false,
+      costsAvailable: false,
+      userAcceptanceAvailable: false,
+      attempts: [{ attemptId: 'u1-run', status: 'unknown' }],
+    });
+    expect(res.body.success).toBeUndefined();
+    expect(JSON.stringify(res.body)).not.toMatch(
+      /private-session|private-provider|private-model|userId/,
+    );
+    expect(prisma.generationHistoryRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1' }, take: 21 }),
+    );
+  });
+
+  it('history actor B cannot select actor A through query or cursor', async () => {
+    const other = await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history?userId=u1')
+      .set('authorization', `Bearer ${KEY}`)
+      .set('x-v4c-actor', actorOf('u2', SECRET))
+      .expect(200);
+    expect(other.body.attempts).toEqual([]);
+    await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history?before=u1-run')
+      .set('authorization', `Bearer ${KEY}`)
+      .set('x-v4c-actor', actorOf('u2', SECRET))
+      .expect(404);
+  });
+
+  it('history access is rechecked when assistant is removed from the pilot', async () => {
+    env = {
+      ...ON,
+      WIZARD_GUIDE_ENGINE: 'pilot',
+      WIZARD_GUIDE_ASSIST_PILOT: 'u2',
+    };
+    await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/generation-history')
+      .set('authorization', `Bearer ${KEY}`)
+      .set('x-v4c-actor', actor())
+      .expect(403);
+    expect(prisma.generationHistoryRun.findMany).not.toHaveBeenCalled();
   });
 });

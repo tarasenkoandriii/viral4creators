@@ -1,3 +1,4 @@
+import { GenerationHistoryModule } from '../generation-history/generation-history.module';
 import { Module } from '@nestjs/common';
 import {
   GuideAssistController,
@@ -18,6 +19,7 @@ import { GuideConnectorGuard } from './guide-connector.guard';
  * `PrismaService` и `PlanService` — из глобальных модулей.
  */
 @Module({
+  imports: [GenerationHistoryModule],
   controllers: [GuideAssistController, GuideFactsController],
   providers: [GuideAssistService, GuideConnectorGuard],
   exports: [GuideAssistService],

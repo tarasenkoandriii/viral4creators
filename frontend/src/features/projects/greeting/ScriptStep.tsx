@@ -1,3 +1,4 @@
+import type { VoiceActionReceipt } from '../../../lib/voice-confirm';
 /**
  * Шаг 3 мастера поздравления — сценарий: сборка и правка текста.
  *
@@ -104,16 +105,26 @@ export function ScriptStep({
     }
   };
 
-  const generate = async () => {
-    if (videoBusy || loading || savingText || shortening) return;
+  const activeSession = useRef(sessionId);
+  activeSession.current = sessionId;
+  const generate = async (): Promise<VoiceActionReceipt> => {
+    if (videoBusy || loading || savingText || shortening)
+      return { state: 'unavailable' };
     setLoading(true);
     setError(null);
     try {
-      onGenerated(await generateGreetingPrompt(sessionId));
+      const result = await generateGreetingPrompt(sessionId);
+      if (!mounted.current || activeSession.current !== sessionId)
+        return { state: 'unavailable' };
+      onGenerated(result);
+      return { state: 'succeeded' };
     } catch (e) {
-      setError(greetingErrorMessage(e, dict));
+      if (mounted.current && activeSession.current === sessionId)
+        setError(greetingErrorMessage(e, dict));
+      return { state: 'failed' };
     } finally {
-      setLoading(false);
+      if (mounted.current && activeSession.current === sessionId)
+        setLoading(false);
     }
   };
 
@@ -129,19 +140,27 @@ export function ScriptStep({
   useEffect(() => {
     editVersion.current += 1;
   }, [text, current, videoBusy, sessionId]);
-  const shorten = async () => {
-    if (!prompt || videoBusy || loading || savingText || shortening) return;
+  const shorten = async (): Promise<VoiceActionReceipt> => {
+    if (!prompt || videoBusy || loading || savingText || shortening)
+      return { state: 'unavailable' };
     const version = editVersion.current;
     setShortening(true);
     setError(null);
     try {
       const result = await shortenGreetingScript(sessionId, text);
-      if (mounted.current && version === editVersion.current) {
+      if (
+        mounted.current &&
+        activeSession.current === sessionId &&
+        version === editVersion.current
+      ) {
         setText(result.text);
         setSavedText(false);
+        return { state: 'needs-save', button: w.saveScriptButton };
       }
+      return { state: 'unavailable' };
     } catch (e) {
       if (mounted.current) setError(greetingErrorMessage(e, dict));
+      return { state: 'failed' };
     } finally {
       if (mounted.current) setShortening(false);
     }
@@ -159,7 +178,7 @@ export function ScriptStep({
               label: w.shortenScriptButton,
             },
           }),
-          run: () => void shorten(),
+          run: shorten,
         }
   );
 
@@ -206,7 +225,7 @@ export function ScriptStep({
               label: prompt ? w.regenerateScriptButton : w.generateScriptButton,
             },
           }),
-          run: () => void generate(),
+          run: generate,
         }
   );
 

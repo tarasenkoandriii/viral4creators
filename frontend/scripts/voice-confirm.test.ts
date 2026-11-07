@@ -244,5 +244,36 @@ check('действие: запущено — названо; обработчи
   );
 });
 
+check(
+  'action receipts distinguish server completion, draft, failure and unavailability',
+  () => {
+    const texts = {
+      ...applyTexts,
+      actionCompleted: 'DONE {action}',
+      actionFailed: 'FAILED',
+    };
+    const card = { kind: 'action' as const, ran: true, label: 'L' };
+    eq(applyOutcomeLine({ ...card, receipt: { state: 'succeeded' } }, texts), {
+      text: 'DONE L',
+      tone: 'success',
+    });
+    eq(applyOutcomeLine({ ...card, receipt: { state: 'failed' } }, texts), {
+      text: 'FAILED',
+      tone: 'warning',
+    });
+    eq(
+      applyOutcomeLine({ ...card, receipt: { state: 'unavailable' } }, texts),
+      { text: 'STALE', tone: 'warning' }
+    );
+    eq(
+      applyOutcomeLine(
+        { ...card, receipt: { state: 'needs-save', button: 'SAVE' } },
+        texts
+      ).text,
+      texts.filledNeedsSave.replace('{button}', 'SAVE')
+    );
+  }
+);
+
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

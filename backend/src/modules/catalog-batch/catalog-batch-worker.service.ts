@@ -161,6 +161,7 @@ const NON_RETRYABLE_NAMES = new Set([
   'NotFoundException',
   'BadRequestException',
   'VeoOperationOrphanedError',
+  'ProviderDispatchUnknownError',
 ]);
 
 /** М-6.5 седьмого аудита: скачивание готового ролика — с таймаутом. */
@@ -671,6 +672,12 @@ export class CatalogBatchWorkerService {
           `Grok-пачка для партии ${run.id}: неожиданный сбой подачи, метка подачи оставлена для ручного разбора — ${
             error instanceof Error ? error.message : String(error)
           }`,
+        );
+        continue;
+      }
+      if (result.error && result.outcomeUnknown) {
+        this.logger.warn(
+          `Grok batch ${run.id}: dispatch outcome unknown; pending marker retained`,
         );
         continue;
       }

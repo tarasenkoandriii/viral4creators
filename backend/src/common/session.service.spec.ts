@@ -163,12 +163,19 @@ function buildRoundTrip() {
     status: 'analysis_complete',
     data: {} as Record<string, unknown>,
     liveData: {} as Record<string, unknown>,
-    userId: null,
+    userId: null as string | null,
+    deletedAt: null as Date | null,
     projectId: null,
     productItemId: null,
   };
   const prisma = {
     session: { findFirst: jest.fn().mockResolvedValue(row) },
+    generationHistoryEvent: { upsert: jest.fn().mockResolvedValue({}) },
+    generationHistoryRun: {
+      upsert: jest.fn(async ({ create }: any) => create),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    $transaction: jest.fn(),
     // Этап 78: `updateSession` пишет событие воронки best-effort через
     // `logWorkflowStage` — она сама глотает ошибки, так что этот мок
     // нужен только тем тестам, которые хотят убедиться, что запись
@@ -202,6 +209,7 @@ function buildRoundTrip() {
         return [{ ...row, previousStatus }];
       }),
   };
+  prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
   return { svc: new SessionService(prisma as any), prisma, row };
 }
 
@@ -508,15 +516,23 @@ describe('SessionService.claimWork / releaseWork (этап 47)', () => {
  */
 describe('SessionService.softDeleteSession (этап 89)', () => {
   function buildSoftDelete(count: number) {
-    const prisma = {
+    const tx = {
       session: { updateMany: jest.fn().mockResolvedValue({ count }) },
+      generationHistoryRun: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
+    const prisma = { ...tx, $transaction: jest.fn((fn) => fn(tx)) };
     return { svc: new SessionService(prisma as any), prisma };
   }
 
   it('ставит deletedAt, а не удаляет строку', async () => {
     const { svc, prisma } = buildSoftDelete(1);
     expect(await svc.softDeleteSession('s1')).toEqual({ deleted: true });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.generationHistoryRun.deleteMany).toHaveBeenCalledWith({
+      where: { sessionId: 's1' },
+    });
     expect(prisma.session.updateMany).toHaveBeenCalledWith({
       where: { id: 's1', deletedAt: null },
       data: { deletedAt: expect.any(Date) },
@@ -620,5 +636,101 @@ describe('SessionService — deletedAt: null фильтрация (этап 89)'
     expect(prisma.session.findMany.mock.calls[0][0].where).toMatchObject({
       deletedAt: null,
     });
+  });
+});
+
+describe('SessionService video history producer', () => {
+  const video = (id: string, status: string) =>
+    ({
+      generatedVideoId: id,
+      status,
+      provider: 'grok',
+      resolution: '720p',
+      pathname: 'private-path',
+      avoidText: 'private prompt',
+    }) as never;
+
+  it('writes only allowlisted metadata under the same transaction as video UPDATE', async () => {
+    const { svc, prisma, row } = buildRoundTrip();
+    row.userId = 'owner-A';
+    await svc.updateSession('s1', {
+      generatedVideo: video('attempt-1', 'processing'),
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.generationHistoryRun.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'attempt-1' },
+        create: {
+          id: 'attempt-1',
+          userId: 'owner-A',
+          sessionId: 's1',
+          module: 'session-video',
+          source: 'unknown',
+          status: 'processing',
+          revision: 2,
+          provider: 'grok',
+          model: undefined,
+          resolution: '720p',
+        },
+      }),
+    );
+    expect(
+      JSON.stringify(prisma.generationHistoryRun.upsert.mock.calls),
+    ).not.toContain('private-path');
+    expect(
+      JSON.stringify(prisma.generationHistoryRun.upsert.mock.calls),
+    ).not.toContain('private prompt');
+  });
+
+  it('projects terminal and queued states using the same stable video id', async () => {
+    const { svc, prisma, row } = buildRoundTrip();
+    row.userId = 'owner-A';
+    for (const status of ['pending', 'processing', 'complete', 'failed']) {
+      await svc.updateSession('s1', {
+        generatedVideo: video('attempt-1', status),
+      });
+    }
+    expect(
+      prisma.generationHistoryRun.upsert.mock.calls.map(([arg]: any) => [
+        arg.create.id,
+        arg.create.status,
+        arg.create.revision,
+      ]),
+    ).toEqual([
+      ['attempt-1', 'queued', 0],
+      ['attempt-1', 'processing', 2],
+      ['attempt-1', 'complete', 3],
+      ['attempt-1', 'failed', 3],
+    ]);
+  });
+
+  it('does not attribute anonymous/deleted sessions or unrelated patches', async () => {
+    const { svc, prisma, row } = buildRoundTrip();
+    await svc.updateSession('s1', {
+      generatedVideo: video('guest', 'complete'),
+    });
+    row.userId = 'owner-A';
+    row.deletedAt = new Date();
+    await svc.updateSession('s1', {
+      generatedVideo: video('deleted', 'complete'),
+    });
+    await svc.updateSession('s1', { status: 'error' as never });
+    expect(prisma.generationHistoryRun.upsert).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not swallow journal failures after attempting the session update', async () => {
+    const { svc, prisma, row } = buildRoundTrip();
+    row.userId = 'owner-A';
+    prisma.generationHistoryRun.upsert.mockRejectedValueOnce(
+      new Error('journal unavailable'),
+    );
+    await expect(
+      svc.updateSession('s1', {
+        generatedVideo: video('attempt-1', 'processing'),
+      }),
+    ).rejects.toThrow('journal unavailable');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    // Real PostgreSQL rollback and row-lock behavior require database integration tests.
   });
 });

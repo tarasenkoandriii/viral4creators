@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
 import {
@@ -17,6 +17,7 @@ import {
   type VoiceLine,
 } from '../../lib/voice-route';
 import {
+  captureSpeechTicket,
   claimVoiceBudgetNotice,
   hasGesture,
   isHintMuted,
@@ -40,6 +41,7 @@ import {
   type ProactiveEvent,
 } from '../../lib/voice-proactive';
 import { VOICE_BUDGET_EXHAUSTED } from '../../lib/hint-audio';
+import { GUIDE_IDENTITY_EVENT } from '../../lib/guide-assist';
 import { requestSpeech } from '../../services/wizard-guide-api';
 import type { GreetingHelpTopic } from '../../lib/greeting-help';
 import {
@@ -164,11 +166,21 @@ export function VoiceAssistant({
   // Разбор приходит асинхронно, а «да» голосом должно видеть карточку,
   // которая на экране СЕЙЧАС, — не ту, что была при начале фразы.
   const confirmRef = useRef(confirm);
+  const confirmEpoch = useRef(0);
+  const actionScope = `${projectId}:${sessionId ?? ''}:${step}`;
+  const actionScopeRef = useRef(actionScope);
+  actionScopeRef.current = actionScope;
   // Потолок — общий с голосом советника (`hint-audio-session.ts`): узнал
   // один канал — молчат оба до конца суток UTC, а сказано об этом ровно
   // один раз на страницу (§4А.7.5), кто бы ни узнал первым.
   // Флаг — свой у каждого человека и тарифа (изменение контракта 6).
   const budgetOwner = useVoiceBudgetOwner();
+  // A project/owner change invalidates callbacks, even before effect cleanup.
+  const speechScope = `${projectId}:${budgetOwner.userId ?? ''}`;
+  const speechScopeRef = useRef(speechScope);
+  speechScopeRef.current = speechScope;
+  const confirmScopeRef = useRef(`${actionScope}|${speechScope}`);
+  useEffect(() => () => stopHint(), [speechScope]);
   const budgetOwnerRef = useRef(budgetOwner);
   budgetOwnerRef.current = budgetOwner;
   // Пересчитывается при смене человека или тарифа: тариф приходит после
@@ -245,13 +257,17 @@ export function VoiceAssistant({
     // Без звука — только строка; у отказов, ответа и сводки она уже на
     // экране (строка разбора, карточка шага, карточка сводки).
     if (!decision.speak) return;
+    const isSpeechCurrent = captureSpeechTicket();
+    const requestScope = speechScope;
+    const requestOwner = budgetOwner;
     void requestSpeech(projectId, speakBodyOf(event, locale)).then((answer) => {
+      if (!isSpeechCurrent() || speechScopeRef.current !== requestScope) return;
       if (answer.kind === 'play') {
         // Звук могли выключить, пока файл ехал. Звучащую реплику не
         // обрываем — очередь страницы скажет эту следом (CONTRACT5).
         if (!isHintMuted()) sayReply(answer.url, 'proactive');
       } else if (answer.kind === VOICE_BUDGET_EXHAUSTED) {
-        markVoiceBudgetExhausted(budgetOwnerRef.current);
+        markVoiceBudgetExhausted(requestOwner);
         if (claimVoiceBudgetNotice()) {
           setLine({ text: budgetText, tone: 'warning' });
         }
@@ -280,6 +296,14 @@ export function VoiceAssistant({
   const stopUntilTapRef = useRef<() => void>(() => undefined);
 
   const onConfirmEvent = (event: ConfirmEvent): void => {
+    const currentConfirmation = ++confirmEpoch.current;
+    const context = `${actionScope}|${speechScope}`;
+    if (event.type === 'propose') confirmScopeRef.current = context;
+    if (event.type === 'confirm' && confirmScopeRef.current !== context) {
+      confirmRef.current = CONFIRM_INITIAL;
+      setConfirm(CONFIRM_INITIAL);
+      return;
+    }
     const r = confirmReducer(confirmRef.current, event);
     confirmRef.current = r.state;
     setConfirm(r.state);
@@ -290,27 +314,52 @@ export function VoiceAssistant({
     // Строка — по тому, что применилось на самом деле, а не по карточке;
     // сохранения карточек сессии дожидаемся (K5, аудит волны 2).
     const vf = dict.voiceFields;
-    void registry.applyCard(r.apply).then((outcome) =>
-      setLine(
-        applyOutcomeLine(outcome, {
-          applied: v.applied,
-          nothingApplied: v.nothingApplied,
-          actionStarted: v.actionStarted,
-          actionStale: v.actionStale,
-          saved: vf.saved,
-          filledNeedsSave: vf.filledNeedsSave,
-          notSaved: vf.notSaved,
-        })
-      )
-    );
+    const isCurrent = captureSpeechTicket();
+    const requestScope = speechScope;
+    const requestActionScope = actionScope;
+    const isActionCurrent = () =>
+      isCurrent() &&
+      speechScopeRef.current === requestScope &&
+      actionScopeRef.current === requestActionScope &&
+      confirmEpoch.current === currentConfirmation;
+    void registry
+      .applyCard(r.apply)
+      .then((outcome) => {
+        if (!isActionCurrent()) return;
+        setLine(
+          applyOutcomeLine(outcome, {
+            applied: v.applied,
+            nothingApplied: v.nothingApplied,
+            actionStarted: v.actionStarted,
+            actionCompleted: v.actionCompleted,
+            actionFailed: v.actionFailed,
+            actionStale: v.actionStale,
+            saved: vf.saved,
+            filledNeedsSave: vf.filledNeedsSave,
+            notSaved: vf.notSaved,
+          })
+        );
+      })
+      .catch(() => {
+        if (isActionCurrent()) {
+          setLine({ text: v.actionFailed, tone: 'warning' });
+        }
+      });
   };
 
   const onUtterance = async (
     audio: Blob,
     mimeType: string,
-    isCurrent: () => boolean,
+    isRecordingCurrent: () => boolean,
     meta: UtteranceMeta
   ): Promise<void> => {
+    const utteranceScope = actionScope;
+    const utteranceActor = speechScope;
+    const utteranceOwner = budgetOwner;
+    const isCurrent = () =>
+      isRecordingCurrent() &&
+      actionScopeRef.current === utteranceScope &&
+      speechScopeRef.current === utteranceActor;
     // Фраза — действие человека: 20-секундный простой (K4) начинается
     // заново, и подсказка шага не повторяется поверх разговора.
     markVoiceActivity();
@@ -344,8 +393,7 @@ export function VoiceAssistant({
       isCurrent,
       hasPendingCard,
       consentTarget: () => voiceConsentTarget(registry),
-      markBudgetExhausted: () =>
-        markVoiceBudgetExhausted(budgetOwnerRef.current),
+      markBudgetExhausted: () => markVoiceBudgetExhausted(utteranceOwner),
       claimBudgetNotice: claimVoiceBudgetNotice,
       onHeard: (heard) => {
         setTranscript(heard);
@@ -481,6 +529,48 @@ export function VoiceAssistant({
   }, [budgetOwner, unblock]);
   stopUntilTapRef.current = listening.disable;
 
+  // A confirmation belongs to the exact screen and identity that proposed it.
+  // Clearing it never starts another operation or resumes the microphone.
+  const clearPending = useCallback(() => {
+    confirmEpoch.current++;
+    confirmRef.current = CONFIRM_INITIAL;
+    setConfirm(CONFIRM_INITIAL);
+    setTranscript(null);
+    setLineState(null);
+    setHelpTopic(null);
+    truncatedRef.current = false;
+    setTruncatedState(false);
+  }, []);
+  const previousContext = useRef({ actionScope, speechScope, sessionId });
+  const disableListening = listening.disable;
+  useEffect(() => {
+    const previous = previousContext.current;
+    if (previous.actionScope !== actionScope) clearPending();
+    if (
+      previous.speechScope !== speechScope ||
+      previous.sessionId !== sessionId
+    ) {
+      disableListening();
+      clearPending();
+    }
+    previousContext.current = { actionScope, speechScope, sessionId };
+  }, [actionScope, speechScope, sessionId, disableListening, clearPending]);
+  useEffect(() => {
+    const cancel = () => {
+      disableListening();
+      clearPending();
+    };
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') cancel();
+    };
+    window.addEventListener(GUIDE_IDENTITY_EVENT, cancel);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener(GUIDE_IDENTITY_EVENT, cancel);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, [disableListening, clearPending]);
+
   // Область объявлений — смонтирована всегда, даже когда панели нет:
   // область, появившаяся вместе с текстом, читалкой не объявляется.
   const liveRegion = (
@@ -552,7 +642,10 @@ export function VoiceAssistant({
             <VoiceControl
               state={listening.state}
               onEnable={listening.enable}
-              onDisable={listening.disable}
+              onDisable={() => {
+                listening.disable();
+                onConfirmEvent({ type: 'cancel' });
+              }}
               onTalkStart={listening.talkStart}
               onTalkStop={listening.talkStop}
             />

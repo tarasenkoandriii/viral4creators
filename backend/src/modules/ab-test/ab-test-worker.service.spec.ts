@@ -1,3 +1,4 @@
+import { ProviderDispatchUnknownError } from '../../common/provider-dispatch';
 import { AbTestWorkerService } from './ab-test-worker.service';
 import { DailySpendLimitExceededException } from '../../common/spend-limits';
 import { VeoOperationOrphanedError } from '../generation/generation.service';
@@ -433,6 +434,24 @@ describe('AbTestWorkerService', () => {
           lockedUntil: null,
         },
       });
+    });
+
+    it('uncertain dispatch never schedules another paid attempt', async () => {
+      const { service, prisma, generation } = setup({ rows: [row()] });
+      generation.generateVideo.mockRejectedValueOnce(
+        new ProviderDispatchUnknownError(),
+      );
+      const result = await service.runBatch();
+      expect(result.failed).toBe(1);
+      expect(prisma.abTestVariant.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'FAILED',
+            nextAttemptAt: null,
+          }),
+        }),
+      );
+      expect(generation.generateVideo).toHaveBeenCalledTimes(1);
     });
 
     it('Е-1.4 шестого аудита: VeoOperationOrphanedError (Veo уже реально стартовала, деньги потрачены) — сразу терминальный FAILED, без бэкоффа', async () => {

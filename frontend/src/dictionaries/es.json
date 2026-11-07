@@ -1684,7 +1684,6 @@
     "shortenScriptButton": "Acortar texto",
     "shorteningScript": "Acortando…",
     "shortenScriptHint": "Revise el texto y pulse Guardar. El guion guardado no cambia automáticamente.",
-
     "title": "Vídeo de felicitación",
     "hint": "Un vídeo de felicitación personal: ocasión, destinatario, tono — el guion se encarga del resto.",
     "occasionLabel": "Ocasión",
@@ -1953,7 +1952,9 @@
     "valueNo": "no",
     "truncated": "La frase era larga: puede que se haya cortado, compruébelo.",
     "processingWait": "Termine después de mi respuesta: ahora no estoy escuchando.",
-    "tooLong": "La frase es demasiado larga: dígala más breve."
+    "tooLong": "La frase es demasiado larga: dígala más breve.",
+    "actionCompleted": "Completed: {action}.",
+    "actionFailed": "The action could not be completed. Check its status before retrying."
   },
   "voiceNav": {
     "here": "Ya estás en el paso «{step}».",
@@ -3028,5 +3029,23 @@
       "trimmed": "The recording is longer than {{max}} s: only the first {{max}} s were kept. Listen to it before building.",
       "queued": "The recording is saved and will be sent right after the current action."
     }
+  },
+  "generationHistory": {
+    "title": "My generation history",
+    "hint": "Only connected video generation attempts appear here so far. Older runs and other generation types may be missing.",
+    "empty": "No recorded attempts yet. This does not mean you have never generated anything.",
+    "auth": "Sign in to view your history.",
+    "error": "History could not be loaded. Try refreshing it.",
+    "refresh": "Refresh",
+    "more": "Show more",
+    "recorded": "Recorded",
+    "attempt": "Attempt",
+    "unknownHint": "The dispatch outcome needs checking. Do not start again: the provider may have accepted the job.",
+    "queued": "Awaiting start or confirmation",
+    "processing": "Generating",
+    "complete": "Generation completed",
+    "failed": "Could not complete",
+    "cancelled": "Cancelled",
+    "unknown": "Needs checking"
   }
 }

@@ -20,13 +20,19 @@
  * video) lives in one JSON column — see prisma/schema.prisma for why.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, Session as SessionRow, WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Session, SessionStatus } from './types/session.types';
 import { sessionBlobPathnames } from './blob-paths';
 import { normalizeLocale } from './locale';
 import { logWorkflowStage } from './workflow-stage-events';
+import { writeGenerationHistoryRun } from './generation-history-write';
 import { SOFT_DELETE_GRACE_MS, SoftDeletePurgeResult } from './soft-delete';
 
 /**
@@ -401,6 +407,55 @@ export class SessionService {
     return row ? this.toSession(row) : undefined;
   }
 
+  /** Internal pre-dispatch history. UUID is generated server-side under the work lock. */
+  async recordVideoAttempt(
+    sessionId: string,
+    runId: string,
+    status: 'queued' | 'failed' | 'unknown',
+    provider: 'veo' | 'grok',
+    resolution?: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT "userId" FROM "sessions"
+        WHERE "id" = ${sessionId} AND "deletedAt" IS NULL FOR UPDATE
+      `;
+      if (!rows.length)
+        throw new NotFoundException('Generation context not found');
+      const userId = rows[0].userId;
+      if (!userId) return; // Never attach a guest attempt to an inferred account.
+      if (status === 'queued') {
+        const unresolved = await tx.generationHistoryRun.findFirst({
+          where: {
+            userId,
+            sessionId,
+            id: { not: runId },
+            module: 'session-video',
+            status: { in: ['queued', 'unknown', 'processing'] },
+          },
+          select: { id: true },
+        });
+        if (unresolved)
+          throw new ConflictException({
+            code: 'GENERATION_RECONCILIATION_REQUIRED',
+            message:
+              'Предыдущая попытка ещё не завершена или требует проверки. Не запускайте повторно.',
+          });
+      }
+      await writeGenerationHistoryRun(tx, {
+        id: runId,
+        userId,
+        sessionId,
+        module: 'session-video',
+        source: 'unknown',
+        status,
+        revision: status === 'queued' ? 0 : status === 'unknown' ? 1 : 3,
+        provider,
+        resolution,
+      });
+    });
+  }
+
   /**
    * Update session data
    * @param sessionId - Session UUID
@@ -467,9 +522,10 @@ export class SessionService {
     // Пустая правка (`{}` — вызовы, меняющие только `status`) попадает
     // в ту же ветку по построению: слияние с пустым объектом равно
     // исходному значению. Отдельного условия для неё не нужно.
-    const rows = await this.prisma.$queryRaw<
-      Array<SessionRow & { previousStatus: string }>
-    >`
+    const persist = async (db: PrismaService | Prisma.TransactionClient) => {
+      const rows = await db.$queryRaw<
+        Array<SessionRow & { previousStatus: string }>
+      >`
       WITH old AS (SELECT status FROM sessions WHERE id = ${sessionId}),
            p AS (
              SELECT ${coldJson}::jsonb AS cold,
@@ -520,6 +576,42 @@ export class SessionService {
       WHERE "sessions"."id" = ${sessionId}
       RETURNING "sessions".*, old.status AS "previousStatus"
     `;
+      const row = rows[0];
+      // Project only the attempt actually committed to this owned live session.
+      // Same transaction as UPDATE: journal failure rolls back the status change.
+      if (row && row.userId && !row.deletedAt && updates.generatedVideo) {
+        const video = this.toSession(row).generatedVideo;
+        if (
+          video?.generatedVideoId &&
+          ['pending', 'processing', 'complete', 'failed'].includes(video.status)
+        ) {
+          await writeGenerationHistoryRun(db as Prisma.TransactionClient, {
+            id: video.generatedVideoId,
+            userId: row.userId,
+            sessionId,
+            module: 'session-video',
+            source: 'unknown',
+            status: video.status === 'pending' ? 'queued' : video.status,
+            revision:
+              video.status === 'pending'
+                ? 0
+                : video.status === 'processing'
+                  ? 2
+                  : 3,
+            provider: video.provider,
+            model: video.hedraModel,
+            resolution: video.resolution,
+          });
+        }
+      }
+      return rows;
+    };
+    // Avoid transactions/table access for unrelated patches. Never swallow a journal
+    // failure or retry a provider here; callers see the existing persistence error.
+    const rows = updates.generatedVideo
+      ? await this.prisma.$transaction((tx) => persist(tx))
+      : await persist(this.prisma);
+
     const row = rows[0];
     if (row && status !== null && row.previousStatus !== row.status) {
       await logWorkflowStage(
@@ -789,11 +881,16 @@ export class SessionService {
    * удалена — идемпотентно, вызывающий сам решает, 404 это или тихий успех.
    */
   async softDeleteSession(sessionId: string): Promise<{ deleted: boolean }> {
-    const result = await this.prisma.session.updateMany({
-      where: { id: sessionId, deletedAt: null },
-      data: { deletedAt: new Date() },
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.session.updateMany({
+        where: { id: sessionId, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      // Explicit deletion removes private memory; TTL cleanup intentionally does not.
+      // Same transaction/row lock as the tombstone prevents late ingestion reviving it.
+      await tx.generationHistoryRun.deleteMany({ where: { sessionId } });
+      return { deleted: result.count > 0 };
     });
-    return { deleted: result.count > 0 };
   }
 
   /**

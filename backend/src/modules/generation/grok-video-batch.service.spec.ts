@@ -159,6 +159,7 @@ describe('GrokVideoBatchService', () => {
         },
       ]);
       expect(r.error).toMatch(/500/);
+      expect(r).toMatchObject({ outcomeUnknown: true });
       expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     });
   });
@@ -404,5 +405,30 @@ describe('GrokVideoBatchService — сверка num_requests после под�
       },
     ]);
     expect(r).toEqual({ xaiBatchId: 'b1' });
+  });
+  it('lost add-requests response preserves uncertain outcome instead of safe retry', async () => {
+    const previousKey = process.env.GROK_API_KEY;
+    process.env.GROK_API_KEY = 'test-key';
+    mockedAxios.post.mockReset();
+    mockedAxios.post.mockResolvedValueOnce({
+      status: 200,
+      data: { id: 'batch-1' },
+    });
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+    );
+    const result = await new GrokVideoBatchService().submitBatch('test', [
+      {
+        batchRequestId: '1',
+        prompt: 'x',
+        durationSeconds: 8,
+        aspectRatio: '9:16',
+        resolution: '480p',
+      },
+    ]);
+    expect(result).toMatchObject({ outcomeUnknown: true });
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+    if (previousKey === undefined) delete process.env.GROK_API_KEY;
+    else process.env.GROK_API_KEY = previousKey;
   });
 });
