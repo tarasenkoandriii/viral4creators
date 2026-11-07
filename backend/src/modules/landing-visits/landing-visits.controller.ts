@@ -10,7 +10,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsBoolean, IsIn, IsUUID } from 'class-validator';
+import { IsBoolean, IsIn, IsUUID, ValidateIf } from 'class-validator';
 import { Request } from 'express';
 import { RateLimit, RateLimitGuard, clientIp } from '../../common/rate-limit';
 import {
@@ -28,12 +28,20 @@ export class LandingVisitDto {
   @IsUUID('4') eventId!: string;
   @IsIn(LANDINGS) landing!: string;
   @IsIn(VISIT_LOCALES) locale!: string;
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(['linkedin', 'unknown'])
+  source?: string;
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(['test', 'unmarked'])
+  traffic?: string;
 }
 class VisitSettingsDto {
   @IsBoolean() ipUniquenessEnabled!: boolean;
 }
 class VisitPeriodDto {
   @IsIn(['1', '7', '30', '90']) days = '7';
+  @IsIn(['all', 'non-test', 'test', 'legacy']) traffic = 'all';
+  @IsIn(['all', 'linkedin', 'unknown', 'legacy']) source = 'all';
 }
 @Controller('public/landing-visits')
 export class LandingVisitsController {
@@ -60,7 +68,7 @@ export class AdminLandingVisitsController {
     @Query() query: VisitPeriodDto,
   ) {
     await this.admin.assertOperator(req.userId);
-    return this.visits.report(Number(query.days));
+    return this.visits.report(Number(query.days), query.traffic, query.source);
   }
   @Patch('settings') async configure(
     @Req() req: AdminAuthenticatedRequest,

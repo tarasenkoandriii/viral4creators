@@ -137,7 +137,11 @@ assert.equal(init.referrerPolicy, 'no-referrer', 'без referrer');
 assert.equal(init.keepalive, true);
 assert.deepEqual(init.headers, { 'content-type': 'application/json' });
 const body = JSON.parse(String(init.body)) as Record<string, string>;
-assert.deepEqual(Object.keys(body).sort(), ['eventId', 'landing', 'locale'], 'только eventId, landing, locale');
+assert.deepEqual(
+  Object.keys(body).sort(),
+  ['eventId', 'landing', 'locale', 'source', 'traffic'],
+  'только разрешённые измерения',
+);
 assert.deepEqual({ landing: body.landing, locale: body.locale }, { landing: LANDING_VISITS_LANDING, locale: 'uk' });
 assert.match(
   body.eventId,
@@ -147,6 +151,17 @@ assert.match(
 const second = JSON.parse(String(calls[1].init.body)) as Record<string, string>;
 assert.notEqual(second.eventId, body.eventId, 'eventId не постоянен — не идентификатор посетителя');
 n += 11;
+assert.equal(body.source, 'unknown');
+assert.equal(body.traffic, 'unmarked');
+sendLandingVisit(URL_PROD, '?utm_source=linkedin&email=private@example.test', '#v4c-test');
+const tagged = JSON.parse(String(calls[2].init.body));
+assert.equal(tagged.source, 'linkedin');
+assert.equal(tagged.traffic, 'test');
+assert.ok(!String(calls[2].init.body).includes('private@'));
+sendLandingVisit(URL_PROD, '?utm_source=linkedin&utm_source=elsewhere', '#v4c-test-other');
+const ambiguous = JSON.parse(String(calls[3].init.body));
+assert.equal(ambiguous.source, 'unknown');
+assert.equal(ambiguous.traffic, 'unmarked');
 assert.equal(LANDING_VISITS_LOCALE, PUBLISHER_BRAND.lang, 'язык счётчика = язык сайта');
 n++;
 // Сбой сети не всплывает (страница не падает).
@@ -173,7 +188,11 @@ const layout = fs.readFileSync(path.join(ROOT, 'src/app/layout.tsx'), 'utf8');
 assert.match(layout, /landingVisitsTarget\(env\.landingVisitsUrl, cfg\)/, 'layout: решение по env + site-config');
 assert.doesNotMatch(layout, /VERCEL_ENV/, 'layout: включение не по VERCEL_ENV');
 const track = fs.readFileSync(path.join(ROOT, 'src/components/Track.tsx'), 'utf8');
-assert.match(track, /if \(visitsEndpoint\) sendLandingVisit\(visitsEndpoint\)/, 'Track: только при адресе от сервера');
+assert.match(
+  track,
+  /if \(visitsEndpoint\) sendLandingVisit\(visitsEndpoint, window\.location\.search, window\.location\.hash\)/,
+  'Track: только при адресе от сервера',
+);
 assert.equal((track.match(/sendLandingVisit\(/g) ?? []).length, 1, 'Track: один вызов');
 // `src/components/LandingVisits.tsx` — копия компонента landing ради теста паритета трёх копий
 // (`landing/scripts/landing-visits.test.ts`); в сайте Publisher её никто не импортирует (в бандл не попадает).

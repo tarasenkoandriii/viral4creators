@@ -66,7 +66,7 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
     if (view !== lastView) {
       lastView = view;
       send('content_view');
-      if (visitsEndpoint) sendLandingVisit(visitsEndpoint);
+      if (visitsEndpoint) sendLandingVisit(visitsEndpoint, window.location.search, window.location.hash);
     }
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.('[data-cta]');

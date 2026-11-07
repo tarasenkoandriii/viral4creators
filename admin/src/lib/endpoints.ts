@@ -1553,11 +1553,11 @@ export interface LandingVisitsReport {
   days: number; timezone: string; since: string; generatedAt: string;
   settings: { ipUniquenessEnabled: boolean; hashConfigured: boolean; changedAt: string | null };
   totals: { views: number; uniqueIps: number; ipCountedViews: number };
-  rows: Array<{ landing: string; locale: string; views: number; uniqueIps: number; ipCountedViews: number }>;
+  rows: Array<{ landing: string; locale: string; source: string | null; traffic: string | null; views: number; uniqueIps: number; ipCountedViews: number }>;
   timeline: Array<{ day: string; views: number }>;
 }
-export function getLandingVisits(days: number) {
-  return apiGet<LandingVisitsReport>('/admin/landing-visits', { days });
+export function getLandingVisits(days: number, traffic = 'all', source = 'all') {
+  return apiGet<LandingVisitsReport>('/admin/landing-visits', { days, traffic, source });
 }
 export function setLandingIpUniqueness(ipUniquenessEnabled: boolean) {
   return apiPatch<LandingVisitsReport['settings']>('/admin/landing-visits/settings', { ipUniquenessEnabled });

@@ -15,8 +15,8 @@
  *     же согласие, что у основного трекера Publisher; `denied` и
  *     `unknown` — не отправлять.
  * Решение принимается на сервере (layout) — клиент получает либо адрес,
- * либо `null`. Тело — `{eventId, landing:'publisher', locale}`: без cookie
- * (`credentials:'omit'`), без referrer, URL, query и идентификатора
+ * либо `null`. Тело — `{eventId, landing:'publisher', locale, source, traffic}`: без cookie
+ * (`credentials:'omit'`), только допустимые метки source/traffic, без referrer, URL, query и идентификатора
  * посетителя (`eventId` — случайный ключ идемпотентности одного события).
  */
 import type { ConsentState, ProductMode } from './api-types';
@@ -80,7 +80,8 @@ export function landingVisitsTarget(
  * идентификатор посетителя). Минимум аргументов — меньше кода в чанке
  * трекера (бюджет ≤ 2048 Б gzip, §13.6).
  */
-export function sendLandingVisit(endpoint: string): void {
+export function sendLandingVisit(endpoint: string, search = '', hash = ''): void {
+  const sources = new URLSearchParams(search).getAll('utm_source');
   // Порядок полей — как у `sendEvent` (track.ts): gzip чанка трекера сжимает повтор.
   fetch(endpoint, {
     method: 'POST',
@@ -88,6 +89,8 @@ export function sendLandingVisit(endpoint: string): void {
       eventId: crypto.randomUUID(),
       landing: LANDING_VISITS_LANDING,
       locale: LANDING_VISITS_LOCALE,
+      source: sources.length === 1 && sources[0] === 'linkedin' ? 'linkedin' : 'unknown',
+      traffic: hash === '#v4c-test' ? 'test' : 'unmarked',
     }),
     keepalive: true,
     credentials: 'omit',

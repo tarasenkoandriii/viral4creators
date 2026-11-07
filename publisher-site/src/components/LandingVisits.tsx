@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
-// First-party aggregate views only. No URL, query, referrer, cookie or visitor ID.
+// Aggregate views: only bounded declared labels; never send URL, query, referrer or visitor ID.
 let lastPath = '';
 export function landingFor(host: string, path: string, landingsByHost: Record<string, string>): string | null {
   const landing = landingsByHost[host];
@@ -19,11 +19,23 @@ export function landingFor(host: string, path: string, landingsByHost: Record<st
   if (page === 'tutorial' || page === 'site-tutorial') return 'tutorial';
   return 'main';
 }
-export function sendLandingVisit(endpoint: string, landing: string, locale: string) {
+export function visitDimensions(search: string, hash: string) {
+  const values = new URLSearchParams(search).getAll('utm_source');
+  return {
+    source: values.length === 1 && values[0] === 'linkedin' ? 'linkedin' : 'unknown',
+    traffic: hash === '#v4c-test' ? 'test' : 'unmarked',
+  };
+}
+export function sendLandingVisit(
+  endpoint: string,
+  landing: string,
+  locale: string,
+  dimensions?: ReturnType<typeof visitDimensions>,
+) {
   void fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ eventId: crypto.randomUUID(), landing, locale }),
+    body: JSON.stringify({ eventId: crypto.randomUUID(), landing, locale, ...dimensions }),
     credentials: 'omit',
     keepalive: true,
     referrerPolicy: 'no-referrer',
@@ -48,10 +60,11 @@ export default function LandingVisits({
       const landing = landingFor(window.location.hostname, pathname, landingsByHost);
 
       if (!landing || !['ru', 'uk', 'en', 'de', 'es'].includes(locale)) return;
-      const key = landing + ':' + locale + ':' + pathname;
+      const dimensions = visitDimensions(window.location.search, window.location.hash);
+      const key = landing + ':' + locale + ':' + pathname + ':' + dimensions.source + ':' + dimensions.traffic;
       if (key === lastPath || document.visibilityState !== 'visible') return;
       lastPath = key;
-      sendLandingVisit(endpoint, landing, locale);
+      sendLandingVisit(endpoint, landing, locale, dimensions);
     };
     send();
     document.addEventListener('visibilitychange', send);

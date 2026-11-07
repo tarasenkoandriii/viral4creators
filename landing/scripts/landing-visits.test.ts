@@ -2,7 +2,7 @@ import { landingVisitsConfig } from '../src/lib/landing-visits';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { landingFor, sendLandingVisit } from '../src/components/LandingVisits';
+import { landingFor, sendLandingVisit, visitDimensions } from '../src/components/LandingVisits';
 assert.equal(landingFor('tutorial.viral4creators.app','/uk',landingVisitsConfig.landingsByHost),'tutorial');
 assert.equal(landingFor('welcome.viral4creators.app','/en/greetings',landingVisitsConfig.landingsByHost),'greeting');
 assert.equal(landingFor('welcome.viral4creators.app','/de',landingVisitsConfig.landingsByHost),'main');
@@ -21,7 +21,7 @@ assert.equal(landingFor('preview.vercel.app','/ru',landingVisitsConfig.landingsB
 const canonical=readFileSync(resolve('src/components/LandingVisits.tsx'),'utf8');
 for(const app of ['sites-landing','publisher-site']) assert.equal(readFileSync(resolve('../'+app+'/src/components/LandingVisits.tsx'),'utf8'),canonical);
 assert.ok(canonical.includes("referrerPolicy: 'no-referrer'"));
-assert.ok(!canonical.includes('document.referrer') && !canonical.includes('location.search') && !canonical.includes('localStorage') && !canonical.includes('sessionStorage'));
+assert.ok(!canonical.includes('document.referrer') && !canonical.includes('localStorage') && !canonical.includes('sessionStorage'));
 assert.equal(landingFor('story-tales.viral4creators.app','/uk/stories/private',landingVisitsConfig.landingsByHost),null);
 console.log('landing-visits: separate product classification, trailing slashes, production hosts, source-free transport and client parity checked');
 
@@ -32,8 +32,13 @@ globalThis.fetch = ((url: string | URL | Request, options?: RequestInit) => {
  return Promise.resolve(new Response(null,{status:202}));
 }) as typeof fetch;
 try {
- sendLandingVisit('https://collector.example.test/visits','tutorial','uk');
- assert.deepEqual(Object.keys(JSON.parse(String(sent[0].options.body))).sort(),['eventId','landing','locale']);
+ sendLandingVisit('https://collector.example.test/visits','tutorial','uk',visitDimensions('?utm_source=linkedin&email=private@example.test','#v4c-test'));
+ assert.deepEqual(Object.keys(JSON.parse(String(sent[0].options.body))).sort(),['eventId','landing','locale','source','traffic']);
+ assert.equal(JSON.parse(String(sent[0].options.body)).source,'linkedin');
+ assert.equal(JSON.parse(String(sent[0].options.body)).traffic,'test');
+ assert.ok(!String(sent[0].options.body).includes('private@'));
+ assert.deepEqual(visitDimensions('?utm_source=LinkedIn','#v4c-test-extra'),{source:'unknown',traffic:'unmarked'});
+ assert.deepEqual(visitDimensions('?utm_source=linkedin&utm_source=other',''),{source:'unknown',traffic:'unmarked'});
  assert.equal(sent[0].options.referrerPolicy,'no-referrer');
  assert.notEqual(sent[0].options.credentials,'include');
  assert.equal(sent[0].options.keepalive,true);

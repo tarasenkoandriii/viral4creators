@@ -5670,8 +5670,11 @@ model StoryCreditCharge {
   @@map("story_credit_charges")
 }
 
-/// First-party landing page views. No source, URL, cookies or raw IP.
+/// Aggregate landing views. Only allowlisted declared source/test labels; no raw URL, referrer, cookies or raw IP.
 model LandingVisit {
+  /// NULL pair means a legacy client: attribution is unknown, never backfilled.
+  source      String?  @db.VarChar(12)
+  traffic     String?  @db.VarChar(12)
   id          String   @id @db.Uuid
   landing     String   @db.VarChar(20)
   locale      String   @db.VarChar(5)

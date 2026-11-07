@@ -23,7 +23,7 @@ describe('Landing views privacy and access', () => {
     expect(visitHash('192.0.2.1', true, undefined)).toBeNull();
     expect(visitHash('unknown', true, key)).toBeNull();
   });
-  it('rejects source fields, arbitrary locales and invalid event identifiers', () => {
+  it('rejects raw attribution, arbitrary labels, locales and invalid event identifiers', () => {
     const valid = {
       eventId: '6dde81f0-9390-4054-b21e-d7f79cf04f71',
       landing: 'tutorial',
@@ -33,6 +33,11 @@ describe('Landing views privacy and access', () => {
       { ...valid, referrer: 'reddit.com' },
       { ...valid, locale: 'invalid' },
       { ...valid, eventId: 'bad' },
+      { ...valid, source: 'arbitrary' },
+      { ...valid, source: null },
+      { ...valid, traffic: null },
+      { ...valid, traffic: 'normal' },
+      { ...valid, utm_source: 'linkedin' },
     ]) {
       expect(
         validateSync(plainToInstance(LandingVisitDto, body), {
@@ -41,6 +46,16 @@ describe('Landing views privacy and access', () => {
         }).length,
       ).toBeGreaterThan(0);
     }
+    expect(
+      validateSync(
+        plainToInstance(LandingVisitDto, {
+          ...valid,
+          source: 'linkedin',
+          traffic: 'test',
+        }),
+        { whitelist: true, forbidNonWhitelisted: true },
+      ),
+    ).toHaveLength(0);
   });
   it('deduplicates canonical IPv6 while separating IPs and secret rotations', () => {
     expect(visitHash('2001:db8::1', true, key)).toBe(
@@ -113,6 +128,16 @@ describe('Landing views privacy and access', () => {
       ],
       skipDuplicates: true,
     });
+    await service.record(
+      { ...body, source: 'linkedin', traffic: 'test' },
+      '192.0.2.1',
+    );
+    expect(
+      prisma.landingVisit.createMany.mock.calls[1][0].data[0],
+    ).toMatchObject({ source: 'linkedin', traffic: 'test' });
+    await expect(
+      service.record({ ...body, source: 'linkedin' }, '192.0.2.1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
   it('refuses to enable hashing without a server secret', async () => {
     const old = process.env.LANDING_ANALYTICS_IP_HASH_SECRET;
@@ -158,6 +183,33 @@ describe('Landing views privacy and access', () => {
       ipCountedViews: 3,
     });
     expect(report.timezone).toBe('Europe/Kyiv');
+    await expect(
+      service.report(7, 'test OR true', 'all'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.report(7, 'all', 'arbitrary')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    for (const traffic of ['test', 'non-test', 'legacy']) {
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ since: new Date('2026-10-16T21:00:00Z') }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { views: 0n, uniqueIps: 0n, ipCountedViews: 0n },
+        ]);
+      const filtered = await service.report(7, traffic, 'linkedin');
+      expect(filtered.filters).toEqual({ traffic, source: 'linkedin' });
+      const query =
+        prisma.$queryRaw.mock.calls[prisma.$queryRaw.mock.calls.length - 1][1];
+      expect(query.values).toContain('linkedin');
+      expect(query.text).toContain(
+        traffic === 'test'
+          ? "traffic = 'test'"
+          : traffic === 'non-test'
+            ? "traffic IS DISTINCT FROM 'test'"
+            : 'traffic IS NULL',
+      );
+    }
   });
   it('rejects invalid origins before writing an event', () => {
     const record = jest.fn();
@@ -180,7 +232,11 @@ describe('Landing views privacy and access', () => {
       admin as never,
     );
     await expect(
-      c.report({ userId: 'user' } as never, { days: '7' }),
+      c.report({ userId: 'user' } as never, {
+        days: '7',
+        traffic: 'all',
+        source: 'all',
+      }),
     ).rejects.toThrow('forbidden');
     await expect(
       c.configure({ userId: 'user' } as never, { ipUniquenessEnabled: true }),
