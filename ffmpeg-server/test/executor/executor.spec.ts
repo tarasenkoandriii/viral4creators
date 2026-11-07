@@ -62,13 +62,16 @@ const entry = (id: string) => {
   return e;
 };
 
-/** Бесконечная команда: вход зациклен, выход — null. */
+/** Практически бесконечная тестовая нагрузка; остаётся валидно ограниченной.
+ * 600 секунд media time CI обрабатывает быстрее дедлайна 800 мс.
+ * Почти миллиард кадров не завершится до timeout/cancel даже на быстром runner.
+ */
 const endless = () =>
   mustParse({
     input_files: { src: 'https://inputs.test/src.mp4' },
     output_files: ['sig.txt'],
     ffmpeg_commands: [
-      '-stream_loop -1 -i {{src}} -vf "metadata=mode=print:file={{sig.txt}}" -an -f null -',
+      '-stream_loop -1 -i {{src}} -vf "metadata=mode=print:file={{sig.txt}}" -an -frames:v 999999999 -f null -',
     ],
   });
 
