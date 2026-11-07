@@ -3199,9 +3199,9 @@ TMA. Роли `creator` — только API фактов (п.3) и знания
    выключен). `API_PUBLIC_URL` должен быть задан (из него `servers[0]`).
    Затем «Помощник сотрудников» → «API» → импорт по URL
    `<API_PUBLIC_URL>/guide-assist/v1/openapi.json`; хост API — verified-хост
-   сайта или отметка SaaS; авторизация — Bearer = ключ коннектора. Три
+   сайта или отметка SaaS; авторизация — Bearer = ключ коннектора. Четыре
    операции придут классом `read` (`listProjects`, `getProjectFacts`,
-   `getAccountSummary`) — включить и назначить роли п.1. «Знания
+   `getAccountSummary`, `listGenerationAttempts`) — включить и назначить роли п.1. «Знания
    (сотрудники)» — добавить `<API_PUBLIC_URL>/guide-assist/v1/knowledge.md`
    (файлом: скачать и загрузить; или ссылкой, если хост API подтверждён);
    «сотрудникам тоже публичный сайт» (`includePublicInAdmin`) — включить,
