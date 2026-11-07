@@ -48,7 +48,7 @@ export function buildEvent(
 /** Сериализация с запасом по лимиту: лишнее (метки, referrer) отбрасывается, а не режется посередине. */
 export function serializeEvent(body: EventBody): string {
   const text = JSON.stringify(body);
-  if (new TextEncoder().encode(text).length <= EVENT_MAX_BYTES) return text;
+  if (new Blob([text]).size <= EVENT_MAX_BYTES) return text;
   return JSON.stringify({ ...body, utm: undefined, referrerHost: undefined });
 }
 
