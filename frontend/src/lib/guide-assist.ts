@@ -172,15 +172,17 @@ export function callAssist(
 // старте мини-аппа — лишний: ответ всегда `legacy`. Гид человека сервер и
 // так сообщает в ответе гида проекта (`GET /projects/:id/wizard-guide`,
 // поле `engine`) — мастер спрашивает его на каждом экране. Поэтому:
-//  - последний известный гид запоминается на устройстве (localStorage);
+//  - последний известный гид запоминается на устройстве на 5 минут;
 //  - на старте `config` спрашивается, только если НЕ известно, что гид —
-//    `legacy` (первый запуск, после смены личности, или известно `assist`);
+//    `legacy` (первый запуск, просроченная запись, смена личности или assist);
 //  - ответ гида проекта обновляет подсказку и шлёт событие окна: пришло
 //    `assist` — `GuideAssistMount` спрашивает `config` (нужны pk и origin)
 //    и вставляет загрузчик; пришло `legacy` при работающем окне — `logout`.
 
 /** Ключ localStorage: последний известный гид на этом устройстве. */
 export const GUIDE_ENGINE_STORAGE_KEY = 'v4c.guide-engine';
+/** Отрицательная подсказка не должна навсегда скрывать включённый пилот. */
+export const GUIDE_ENGINE_HINT_TTL_MS = 5 * 60 * 1000;
 /** Событие окна: сервер сообщил гид человека (`detail` — `GuideEngine`). */
 export const GUIDE_ENGINE_EVENT = 'v4c:guide-engine';
 
@@ -213,12 +215,27 @@ export interface GuideEngineStore {
   removeItem(key: string): void;
 }
 
-/** Подсказка с устройства; нет хранилища или оно бросает — null. */
+/** Подсказка с устройства: старый формат, истечение и сбой → новая проверка. */
 export function readGuideEngineHint(
-  store: GuideEngineStore | null
+  store: GuideEngineStore | null,
+  nowMs = Date.now()
 ): GuideEngine | null {
   try {
-    return guideEngineOf(store?.getItem(GUIDE_ENGINE_STORAGE_KEY) ?? null);
+    const raw = store?.getItem(GUIDE_ENGINE_STORAGE_KEY);
+    if (!raw || !Number.isFinite(nowMs)) return null;
+    const cached: unknown = JSON.parse(raw);
+    if (!cached || typeof cached !== 'object' || Array.isArray(cached))
+      return null;
+    const { engine, checkedAt } = cached as Record<string, unknown>;
+    if (
+      typeof checkedAt !== 'number' ||
+      !Number.isFinite(checkedAt) ||
+      checkedAt < 0 ||
+      nowMs < checkedAt ||
+      nowMs - checkedAt >= GUIDE_ENGINE_HINT_TTL_MS
+    )
+      return null;
+    return guideEngineOf(engine);
   } catch {
     return null;
   }
@@ -227,10 +244,15 @@ export function readGuideEngineHint(
 /** Запомнить гид (`null` — забыть). Сбой хранилища не мешает работе. */
 export function writeGuideEngineHint(
   store: GuideEngineStore | null,
-  engine: GuideEngine | null
+  engine: GuideEngine | null,
+  nowMs = Date.now()
 ): void {
   try {
-    if (engine) store?.setItem(GUIDE_ENGINE_STORAGE_KEY, engine);
+    if (engine && Number.isFinite(nowMs) && nowMs >= 0)
+      store?.setItem(
+        GUIDE_ENGINE_STORAGE_KEY,
+        JSON.stringify({ engine, checkedAt: nowMs })
+      );
     else store?.removeItem(GUIDE_ENGINE_STORAGE_KEY);
   } catch {
     /* приватный режим / запрет хранилища: просто без подсказки */

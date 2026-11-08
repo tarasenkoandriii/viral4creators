@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   GUIDE_ENGINE_EVENT,
+  GUIDE_ENGINE_HINT_TTL_MS,
   GUIDE_ENGINE_STORAGE_KEY,
   GUIDE_JWT_RETRY_MS,
   announceGuideEngine,
@@ -132,7 +133,10 @@ async function main() {
     const s = new MemStore();
     assert.equal(readGuideEngineHint(s), null);
     writeGuideEngineHint(s, 'legacy');
-    assert.equal(s.getItem(GUIDE_ENGINE_STORAGE_KEY), 'legacy');
+    assert.equal(
+      JSON.parse(s.getItem(GUIDE_ENGINE_STORAGE_KEY)!).engine,
+      'legacy'
+    );
     assert.equal(readGuideEngineHint(s), 'legacy');
     writeGuideEngineHint(s, null);
     assert.equal(readGuideEngineHint(s), null);
@@ -153,6 +157,51 @@ async function main() {
     writeGuideEngineHint(broken, 'assist');
     writeGuideEngineHint(null, 'assist');
     assert.equal(readGuideEngineHint(null), null);
+  });
+
+  await it('срок подсказки ограничен; старый legacy, будущее и повреждённые записи не блокируют сервер', () => {
+    const s = new MemStore();
+    const now = 1_000_000;
+    writeGuideEngineHint(s, 'legacy', now);
+    assert.equal(readGuideEngineHint(s, now), 'legacy');
+    assert.equal(
+      readGuideEngineHint(s, now + GUIDE_ENGINE_HINT_TTL_MS - 1),
+      'legacy'
+    );
+    assert.equal(readGuideEngineHint(s, now + GUIDE_ENGINE_HINT_TTL_MS), null);
+    assert.equal(readGuideEngineHint(s, now - 1), null);
+    for (const raw of [
+      'legacy',
+      'assist',
+      'null',
+      '[]',
+      '{}',
+      '{',
+      JSON.stringify({ engine: 'legacy', checkedAt: '1' }),
+      JSON.stringify({ engine: 'pilot', checkedAt: now }),
+      JSON.stringify({ engine: 'legacy', checkedAt: -1 }),
+    ]) {
+      s.setItem(GUIDE_ENGINE_STORAGE_KEY, raw);
+      assert.equal(readGuideEngineHint(s, now), null);
+    }
+  });
+
+  await it('включённый пилот обнаруживается без выхода при старой или просроченной legacy-подсказке', async () => {
+    for (const raw of [
+      'legacy',
+      JSON.stringify({
+        engine: 'legacy',
+        checkedAt: Date.now() - GUIDE_ENGINE_HINT_TTL_MS,
+      }),
+    ]) {
+      const h = harness({ hint: 'legacy', config: ON });
+      h.store.setItem(GUIDE_ENGINE_STORAGE_KEY, raw);
+      await h.ctl.start();
+      assert.equal(h.log.config, 1);
+      assert.equal(h.log.inserted, 1);
+      assert.deepEqual(h.log.calls, [['identify-admin', 'a.b.c']]);
+      h.ctl.dispose();
+    }
   });
 
   await it('ответ гида проекта → подсказка и событие окна; без engine — ничего', () => {
@@ -331,7 +380,7 @@ async function main() {
 
 // Висящий промис молча завершил бы процесс с кодом 0: таймер держит цикл
 // событий и валит прогон, если main() не дошёл до конца.
-const TOTAL = 12;
+const TOTAL = 14;
 const hang = setTimeout(() => {
   console.error(`guide-engine-hint: завис, прошло ${passed} из ${TOTAL}`);
   process.exit(1);
