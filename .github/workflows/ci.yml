@@ -1040,17 +1040,19 @@ jobs:
           cache-dependency-path: ffmpeg-server/package-lock.json
       - name: ffmpeg (libx264, libass) и шрифты с кириллицей
         run: |
-          # The Azure HTTP mirror exhausted this job's 20-minute budget.
-          # Use Ubuntu's official HTTPS archive; keep every verification enabled.
-          # Current runner images use mirror+file, so replacing a direct URI
-          # alone does not change the effective package download mirror.
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            echo 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
-          fi
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core fonts-noto-core
-          ffmpeg -hide_banner -version | head -n 1
+          # The runner already has DejaVu. Use a pinned GPL build so
+          # codec tests do not depend on Ubuntu package mirror availability.
+          archive="$RUNNER_TEMP/ffmpeg-linux64.tar.xz"
+          bin_dir="$RUNNER_TEMP/ffmpeg-ci"
+          curl --fail --silent --show-error --location --retry 3 --max-time 120 \
+            'https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-11-11-12-39/ffmpeg-n8.1.3-35-gf1acb0a266-linux64-gpl-8.1.tar.xz' \
+            --output "$archive"
+          echo "32430dc6642d835511470728811e1555ec7ec09d4d27638b059f0e577a98d4e7  $archive" | sha256sum --check
+          mkdir -p "$bin_dir"
+          tar -xJf "$archive" -C "$bin_dir" --strip-components=2 --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
+          "$bin_dir/ffmpeg" -hide_banner -version
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+          echo "$bin_dir" >> "$GITHUB_PATH"
       - run: npm ci
         working-directory: ffmpeg-server
       - name: типы (src + test)
