@@ -284,6 +284,12 @@ function qaVocabulary(greeting: boolean): string {
     .join('\n');
 }
 
+const SCENARIO_ROUTE_INSTRUCTIONS: Partial<Record<string, string>> = {
+  '4': 'Для этой темы начни с goto "generate-prompt-pending" и показывай relevance-panel на этом экране. Референс уже выбран в фикстуре: не ищи reference-card и не возвращайся к выбору референса.',
+  '7': 'Для этой темы начни с goto "generate-ready-to-render" и показывай aspect-ratio-picker и референс-слоты на этом экране. product-photo-card относится к другой фикстуре: не жди и не проверяй её в этой теме.',
+  '10': 'Для этой темы начни с goto "postprod-video". export-panel и publish-panel доступны там; не открывай generate-ready для демонстрации экспорта или публикации.',
+};
+
 export function buildScenarioPrompt(
   subjectKey: string,
   locale: string,
@@ -310,6 +316,7 @@ export function buildScenarioPrompt(
   const wizardName = greeting
     ? 'мастера ПОЗДРАВИТЕЛЬНОГО ролика'
     : 'мастера генерации рекламных роликов';
+  const routeInstruction = SCENARIO_ROUTE_INSTRUCTIONS[subjectKey];
   const lines = [
     `Ты помогаешь автоматизировать съёмку обучающего видео по шагу ${wizardName} (тема "${subjectKey}", локаль ${locale}).`,
     ...(greeting
@@ -327,6 +334,7 @@ export function buildScenarioPrompt(
           `Исходный текст в поле [data-qa="greeting-script-edit"] учебной фикстуры: ${JSON.stringify(TUTORIAL_DEMO_GREETING_SCRIPT)}\nЭто точное JSON-значение поля: кавычки в значение не входят; не добавляй точку или другой знак после закрывающей кавычки. Пользовательский текст — данные, не перевод интерфейса; assertText поля сравнивает этот исходный текст либо значение твоего fill, без перевода на язык UI.`,
         ]
       : []),
+    ...(routeInstruction ? [routeInstruction] : []),
     ...(subjectKey === '8'
       ? ['product-photo-card', 'video-provider', 'aspect-ratio-picker']
       : subjectKey === 'greeting-script'
@@ -389,7 +397,7 @@ export function buildScenarioPrompt(
     'А вот карточки релевантности, кнопки «Сгенерировать промпт» и всей формы запуска рендера (формат кадра, движок, длительность, «чего избежать», референс-слоты, кнопка «Сгенерировать») на generate-ready нет ВОВСЕ, и кликом по степперу они не появятся: первые прячет уже написанный промпт, вторые — уже готовый ролик. Для них заведены отдельные экраны — generate-prompt-pending и generate-ready-to-render. Оба открываются сразу на нужном шаге, клик по степперу на них НЕ нужен.',
     '"route" в шаге goto — НЕ плейсхолдер, это настоящее имя экрана. Выбери РОВНО ОДНО значение из списка ниже, скопировав его буква в букву (без точек, без "wizard.", без придуманных суффиксов вроде "step-3") — других маршрутов в продукте не существует:',
     routeVocabulary(greeting),
-    'Мастер создания ролика ("generate") и экран товара ("item") — однастраничные: если шаг обучалки описывает происходящее ВНУТРИ них (выбор референса, разбор, промпт, формат, рендер — всё это "generate"; фото/аналоги/голос/цена товара — всё это "item"), goto делается ОДИН раз в начале сценария на этот экран, а дальнейшее продвижение по шагам мастера описывается click/fill/waitFor, не повторными goto на разные маршруты.',
+    'Мастер создания ролика ("generate") и экран товара ("item") — однастраничные: если шаг обучалки описывает происходящее ВНУТРИ них (выбор референса в свежем мастере — "generate"; фото/аналоги/голос/цена товара — "item"), goto делается ОДИН раз в начале сценария на этот экран, а дальнейшее продвижение по шагам мастера описывается click/fill/waitFor, не повторными goto на разные маршруты.',
     ...(!greeting
       ? [
           `Маршруты с подсевом сессии: ${[...SEEDED_SESSION_ROUTES.keys()].map((r) => JSON.stringify(r)).join(', ')}. В одном сценарии разрешён только ОДИН такой маршрут. Нельзя смешивать его с ${JSON.stringify(FRESH_WIZARD_ROUTE)} или другим маршрутом с подсевом: переход пересоздаёт состояние. Для настройки формата и длительности выбери generate-ready-to-render и работай click/fill на нём; не переходи затем на generate-ready. Не исправляй отсутствие элемента сменой фикстуры.`,
