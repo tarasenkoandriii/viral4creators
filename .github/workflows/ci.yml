@@ -421,7 +421,7 @@ jobs:
     name: widget (виджет помощника) — типы, линт, тесты, сборка, размер, e2e
     needs: changes
     if: needs.changes.outputs.widget == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Compatible with the pinned Playwright Chromium.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -525,7 +525,7 @@ jobs:
     name: sites-landing — типы, линт, тесты, сборка, e2e виджета, Lighthouse, axe
     needs: changes
     if: needs.changes.outputs.sites_landing == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Compatible with the pinned Playwright Chromium.
     env:
       # Временный домен лендинга (doc/DEPLOYMENT.md §6.0): сборке нужен абсолютный адрес.
       SITE_URL: https://assist.viral4creators.app
@@ -638,7 +638,7 @@ jobs:
     name: publisher-site — типы, линт, тесты, две сборки (noindex/index), бюджет JS, axe, e2e, Lighthouse
     needs: changes
     if: needs.changes.outputs.publisher_site == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Compatible with the pinned Playwright Chromium.
     # Зависший стенд/Lighthouse не держит раннер 6 ч (обычный прогон ≈ 12 мин).
     timeout-minutes: 30
     env:
@@ -746,7 +746,7 @@ jobs:
     name: Publisher — сквозные E2E-01…05 против настоящего sites-backend и сайта
     needs: changes
     if: needs.changes.outputs.publisher_stand == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Compatible with the pinned Playwright Chromium.
     # Обычный прогон ≈ 15 мин (три npm ci, nest build, next build, 51 шаг).
     timeout-minutes: 45
 
@@ -1084,7 +1084,7 @@ jobs:
     name: browser-worker — копии, типы, линт, unit, e2e Chromium
     needs: changes
     if: needs.changes.outputs.browser_worker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Compatible with the pinned Playwright Chromium.
     permissions:
       contents: read
     env:
