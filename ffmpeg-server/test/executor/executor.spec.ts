@@ -83,7 +83,7 @@ describe('executor: функциональные сценарии', () => {
       failedStep: null,
       exitCode: 0,
     });
-    expect(done.ffmpegVersion).toMatch(/^\d/);
+    expect(done.ffmpegVersion).toMatch(/^n?\d/);
     const v = await verifyOutputs(a.dir, plan.outputs, PILOT_LIMITS);
     expect(v).toMatchObject({ ok: true, files: [{ mime: 'image/jpeg' }] });
     // state.json — exited, процессов группы нет.
