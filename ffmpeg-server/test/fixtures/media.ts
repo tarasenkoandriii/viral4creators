@@ -86,7 +86,9 @@ export function makeImage(
 /** FFmpeg 5.1 writes the MP4 matrix through metadata; 6+ supports input rotation. */
 export function rotateVideo(source: string, output: string): void {
   const version = spawnSync(FFMPEG, ['-version'], { encoding: 'utf8' });
-  const major = Number(/ffmpeg version n?(\d+)/.exec(version.stdout ?? '')?.[1]);
+  const major = Number(
+    /ffmpeg version n?(\d+)/.exec(version.stdout ?? '')?.[1],
+  );
   if (!Number.isFinite(major))
     throw new Error('Cannot determine fixture FFmpeg version');
   if (major >= 6)
