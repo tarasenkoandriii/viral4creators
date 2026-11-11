@@ -1176,6 +1176,38 @@ describe('grounding routes for observed multilingual generation failures', () =>
     expect(prompt).toContain('не добавляй точку');
   });
 
+  it.each([
+    ['4', 'de', 'generate-prompt-pending', 'relevance-panel', 'reference-card'],
+    [
+      '7',
+      'de',
+      'generate-ready-to-render',
+      'aspect-ratio-picker',
+      'product-photo-card',
+    ],
+    ['10', 'es', 'postprod-video', 'export-panel', 'export-panel'],
+  ])(
+    'grounds failed scenario %s/%s in the correct screen',
+    (topic, locale, route, hook, wrongHook) => {
+      const guidance = buildScenarioPrompt(topic, locale, step)
+        .split('\n')
+        .find((line) => line.startsWith('Для этой темы начни'));
+      expect(guidance).toContain(`goto "${route}"`);
+      expect(guidance).toContain(hook);
+      expect(guidance).toContain(wrongHook);
+      const candidateRoute = topic === '10' ? 'generate-ready' : route;
+      expect(
+        validateScenarioSteps(
+          [
+            { kind: 'goto', route: candidateRoute },
+            { kind: 'assertVisible', selector: `[data-qa="${wrongHook}"]` },
+          ],
+          topic,
+        ).ok,
+      ).toBe(false);
+    },
+  );
+
   it('uses current hook routes for every locale without weakening validation', () => {
     for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
       for (const [topic, hooks] of [
