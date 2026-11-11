@@ -1050,9 +1050,11 @@ jobs:
           echo "32430dc6642d835511470728811e1555ec7ec09d4d27638b059f0e577a98d4e7  $archive" | sha256sum --check
           mkdir -p "$bin_dir"
           tar -xJf "$archive" -C "$bin_dir" --strip-components=2 --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
-          "$bin_dir/ffmpeg" -hide_banner -version
+          # The executor deliberately starts subprocesses with /usr/bin:/bin.
+          sudo install -m 0755 "$bin_dir/ffmpeg" "$bin_dir/ffprobe" /usr/bin/
+          env -i PATH=/usr/bin:/bin ffmpeg -hide_banner -version
+          env -i PATH=/usr/bin:/bin ffprobe -hide_banner -version
           test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-          echo "$bin_dir" >> "$GITHUB_PATH"
       - run: npm ci
         working-directory: ffmpeg-server
       - name: типы (src + test)
